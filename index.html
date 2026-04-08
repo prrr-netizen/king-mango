@@ -7,12 +7,13 @@ require __DIR__ . '/db.php';
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
+
 if (!isset($_SESSION['login_attempts'])) {
     $_SESSION['login_attempts'] = 0;
     $_SESSION['last_attempt_time'] = time();
 }
 
-// ── AJAX 처리 (모든 기능 포함) ──
+// ── AJAX 처리 ──
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     header('Content-Type: application/json');
@@ -77,7 +78,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
     
-    if ($action === 'logout') { session_destroy(); echo json_encode(['success' => true]); exit; }
+    if ($action === 'logout') { 
+        session_destroy(); 
+        echo json_encode(['success' => true]); 
+        exit; 
+    }
     
     if ($action === 'write_post') {
         $title = htmlspecialchars(trim($_POST['title'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -192,7 +197,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $lv = intval($_POST['lv'] ?? 1);
         $cu = $_SESSION['user'] ?? null;
         if (!$cu || ($cu['isAdmin'] != 1 && $cu['id'] !== 'admin' && $cu['id'] !== 'ranl')) { 
-            echo json_encode(['success' => false, 'error' => '권한 없음']); exit; 
+            echo json_encode(['success' => false, 'error' => '권한 없음']); 
+            exit; 
         }
         $stmt = $mysqli->prepare("UPDATE users SET lv=? WHERE id=?"); 
         $stmt->bind_param("is", $lv, $target_id);
@@ -204,7 +210,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $target_id = htmlspecialchars(trim($_POST['target_id'] ?? ''), ENT_QUOTES, 'UTF-8');
         $cu = $_SESSION['user'] ?? null;
         if (!$cu || ($cu['isAdmin'] != 1 && $cu['id'] !== 'admin' && $cu['id'] !== 'ranl')) { 
-            echo json_encode(['success' => false, 'error' => '권한 없음']); exit; 
+            echo json_encode(['success' => false, 'error' => '권한 없음']); 
+            exit; 
         }
         $stmt = $mysqli->prepare("DELETE FROM users WHERE id=? AND isAdmin=0"); 
         $stmt->bind_param("s", $target_id);
@@ -215,7 +222,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'get_users') {
         $cu = $_SESSION['user'] ?? null;
         if (!$cu || ($cu['isAdmin'] != 1 && $cu['id'] !== 'admin' && $cu['id'] !== 'ranl')) { 
-            echo json_encode(['success' => false, 'error' => '권한 없음']); exit; 
+            echo json_encode(['success' => false, 'error' => '권한 없음']); 
+            exit; 
         }
         $result = $mysqli->query("SELECT id, nick, lv, point, joined, isAdmin FROM users ORDER BY id ASC");
         $users = []; 
@@ -224,7 +232,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
     
-    // 팝업 저장
+    // 팝업 저장 (여러 개)
     if ($action === 'save_popup') {
         $popup_id = $_POST['popup_id'] ?? null;
         $title = htmlspecialchars(trim($_POST['popup_title'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -236,33 +244,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $left = intval($_POST['popup_left'] ?? 100);
         $duration = intval($_POST['popup_duration'] ?? 86400);
         $order_num = intval($_POST['popup_order'] ?? 0);
+        
         $popups = file_exists('popup_data.json') ? (json_decode(file_get_contents('popup_data.json'), true) ?: []) : [];
+        
         if ($popup_id && isset($popups[$popup_id])) {
-            $popups[$popup_id] = ['id' => $popup_id, 'title' => $title, 'content' => $content, 'link' => $link, 'width' => $width, 'height' => $height, 'top' => $top, 'left' => $left, 'duration' => $duration, 'order' => $order_num, 'created_at' => $popups[$popup_id]['created_at']];
+            $popups[$popup_id] = [
+                'id' => $popup_id,
+                'title' => $title,
+                'content' => $content,
+                'link' => $link,
+                'width' => $width,
+                'height' => $height,
+                'top' => $top,
+                'left' => $left,
+                'duration' => $duration,
+                'order' => $order_num,
+                'created_at' => $popups[$popup_id]['created_at']
+            ];
         } else {
             $newId = uniqid();
-            $popups[$newId] = ['id' => $newId, 'title' => $title, 'content' => $content, 'link' => $link, 'width' => $width, 'height' => $height, 'top' => $top, 'left' => $left, 'duration' => $duration, 'order' => $order_num, 'created_at' => time()];
+            $popups[$newId] = [
+                'id' => $newId,
+                'title' => $title,
+                'content' => $content,
+                'link' => $link,
+                'width' => $width,
+                'height' => $height,
+                'top' => $top,
+                'left' => $left,
+                'duration' => $duration,
+                'order' => $order_num,
+                'created_at' => time()
+            ];
         }
+        
         file_put_contents('popup_data.json', json_encode($popups));
         echo json_encode(['success' => true]); 
         exit;
     }
     
+    // 팝업 삭제
     if ($action === 'delete_popup') {
         $popup_id = $_POST['popup_id'] ?? null;
         $popups = file_exists('popup_data.json') ? (json_decode(file_get_contents('popup_data.json'), true) ?: []) : [];
-        if ($popup_id && isset($popups[$popup_id])) { unset($popups[$popup_id]); file_put_contents('popup_data.json', json_encode($popups)); }
-        echo json_encode(['success' => true]); exit;
+        if ($popup_id && isset($popups[$popup_id])) {
+            unset($popups[$popup_id]);
+            file_put_contents('popup_data.json', json_encode($popups));
+        }
+        echo json_encode(['success' => true]); 
+        exit;
     }
     
+    // 팝업 목록 가져오기
     if ($action === 'get_popups') {
         $popups = file_exists('popup_data.json') ? (json_decode(file_get_contents('popup_data.json'), true) ?: []) : [];
         $activePopups = [];
         foreach ($popups as $p) {
             $expire = ($p['created_at'] ?? 0) + ($p['duration'] ?? 86400);
-            if ($expire > time()) $activePopups[] = $p;
+            if ($expire > time()) {
+                $activePopups[] = $p;
+            }
         }
-        usort($activePopups, function($a, $b) { return ($a['order'] ?? 0) - ($b['order'] ?? 0); });
+        usort($activePopups, function($a, $b) {
+            return ($a['order'] ?? 0) - ($b['order'] ?? 0);
+        });
         echo json_encode(['success' => true, 'popups' => $activePopups]); 
         exit;
     }
@@ -276,7 +321,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bind_param("sss", $keyword, $user_id, $ip);
             $stmt->execute();
         }
-        echo json_encode(['success' => true]); exit;
+        echo json_encode(['success' => true]);
+        exit;
     }
     
     // 갤러리 이미지 업로드
@@ -284,26 +330,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $title = htmlspecialchars(trim($_POST['title'] ?? ''), ENT_QUOTES, 'UTF-8');
         $writer = htmlspecialchars(trim($_POST['writer'] ?? ''), ENT_QUOTES, 'UTF-8');
         $image_data = $_POST['image_data'] ?? '';
-        if (!$title || !$image_data) { echo json_encode(['success' => false, 'error' => '제목과 이미지를 입력하세요']); exit; }
+        
+        if (!$title || !$image_data) {
+            echo json_encode(['success' => false, 'error' => '제목과 이미지를 입력하세요']);
+            exit;
+        }
+        
         $gallery = file_exists('gallery_data.json') ? (json_decode(file_get_contents('gallery_data.json'), true) ?: []) : [];
+        
         $newId = time() . '_' . rand(1000, 9999);
-        $gallery[$newId] = ['id' => $newId, 'title' => $title, 'writer' => $writer, 'image' => $image_data, 'likes' => 0, 'liked_by' => [], 'created_at' => date('Y-m-d H:i:s'), 'timestamp' => time()];
+        $gallery[$newId] = [
+            'id' => $newId,
+            'title' => $title,
+            'writer' => $writer,
+            'image' => $image_data,
+            'likes' => 0,
+            'liked_by' => [],
+            'created_at' => date('Y-m-d H:i:s'),
+            'timestamp' => time()
+        ];
+        
         file_put_contents('gallery_data.json', json_encode($gallery));
-        echo json_encode(['success' => true, 'id' => $newId]); exit;
+        echo json_encode(['success' => true, 'id' => $newId]);
+        exit;
     }
     
     if ($action === 'get_gallery') {
         $gallery = file_exists('gallery_data.json') ? (json_decode(file_get_contents('gallery_data.json'), true) ?: []) : [];
         $galleryArray = array_values($gallery);
-        usort($galleryArray, function($a, $b) { return $b['timestamp'] - $a['timestamp']; });
-        echo json_encode(['success' => true, 'images' => $galleryArray]); exit;
+        usort($galleryArray, function($a, $b) {
+            return $b['timestamp'] - $a['timestamp'];
+        });
+        echo json_encode(['success' => true, 'images' => $galleryArray]);
+        exit;
     }
     
     if ($action === 'like_gallery') {
         $image_id = $_POST['image_id'] ?? '';
         $user_id = $_SESSION['user']['id'] ?? null;
-        if (!$user_id) { echo json_encode(['success' => false, 'error' => '로그인이 필요합니다']); exit; }
+        
+        if (!$user_id) {
+            echo json_encode(['success' => false, 'error' => '로그인이 필요합니다']);
+            exit;
+        }
+        
         $gallery = file_exists('gallery_data.json') ? (json_decode(file_get_contents('gallery_data.json'), true) ?: []) : [];
+        
         if (isset($gallery[$image_id])) {
             $liked_by = $gallery[$image_id]['liked_by'] ?? [];
             if (!in_array($user_id, $liked_by)) {
@@ -312,18 +384,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $gallery[$image_id]['likes'] = count($liked_by);
                 file_put_contents('gallery_data.json', json_encode($gallery));
                 echo json_encode(['success' => true, 'likes' => $gallery[$image_id]['likes']]);
-            } else { echo json_encode(['success' => false, 'error' => '이미 추천했습니다']); }
-        } else { echo json_encode(['success' => false, 'error' => '이미지를 찾을 수 없습니다']); }
+            } else {
+                echo json_encode(['success' => false, 'error' => '이미 추천했습니다']);
+            }
+        } else {
+            echo json_encode(['success' => false, 'error' => '이미지를 찾을 수 없습니다']);
+        }
         exit;
     }
     
     if ($action === 'delete_gallery') {
         $image_id = $_POST['image_id'] ?? '';
         $cu = $_SESSION['user'] ?? null;
-        if (!$cu || ($cu['isAdmin'] != 1 && $cu['id'] !== 'admin')) { echo json_encode(['success' => false, 'error' => '권한 없음']); exit; }
+        
+        if (!$cu || ($cu['isAdmin'] != 1 && $cu['id'] !== 'admin')) {
+            echo json_encode(['success' => false, 'error' => '권한 없음']);
+            exit;
+        }
+        
         $gallery = file_exists('gallery_data.json') ? (json_decode(file_get_contents('gallery_data.json'), true) ?: []) : [];
-        if (isset($gallery[$image_id])) { unset($gallery[$image_id]); file_put_contents('gallery_data.json', json_encode($gallery)); echo json_encode(['success' => true]); }
-        else { echo json_encode(['success' => false, 'error' => '이미지를 찾을 수 없습니다']); }
+        
+        if (isset($gallery[$image_id])) {
+            unset($gallery[$image_id]);
+            file_put_contents('gallery_data.json', json_encode($gallery));
+            echo json_encode(['success' => true]);
+        } else {
+            echo json_encode(['success' => false, 'error' => '이미지를 찾을 수 없습니다']);
+        }
         exit;
     }
 }
@@ -333,7 +420,9 @@ $seenIds = [];
 $result = $mysqli->query("SELECT * FROM board_posts ORDER BY notice DESC, id DESC");
 if ($result) { 
     while ($row = $result->fetch_assoc()) { 
-        if (isset($seenIds[$row['id']])) continue;
+        if (isset($seenIds[$row['id']])) {
+            continue;
+        }
         $seenIds[$row['id']] = true;
         $row['comments'] = $row['comments'] ? json_decode($row['comments'], true) : []; 
         $dbPosts[] = $row; 
@@ -356,12 +445,17 @@ $memberCount = $mysqli->query("SELECT COUNT(*) FROM users")->fetch_row()[0];
 
 $totalPosts = 0;
 foreach($dbPosts as $p) {
-    if(empty($p['notice']) || $p['notice'] == 0) $totalPosts++;
+    if(empty($p['notice']) || $p['notice'] == 0) {
+        $totalPosts++;
+    }
 }
 
+// 공지사항 가져오기 (마퀴용)
 $noticePosts = [];
 foreach($dbPosts as $p) {
-    if($p['notice'] == 1) $noticePosts[] = $p;
+    if($p['notice'] == 1) {
+        $noticePosts[] = $p;
+    }
 }
 
 function h($s){return htmlspecialchars($s ?? '', ENT_QUOTES, 'UTF-8');}
@@ -382,402 +476,1070 @@ if ($currentUser && isset($currentUser['pw'])) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" class="no-js scheme_default">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RANL AD — 디스코드 봇 & 커뮤니티</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<title>RANL AD — 소셜 커뮤니티 | 게시판, 갤러리, 실시간 소통</title>
+<meta name="description" content="RANL AD 소셜 커뮤니티 — 게시판, 갤러리, 멤버, 그룹, 실시간 활동 피드, 이미지 공유">
+<meta name="keywords" content="RANL,커뮤니티,소셜,게시판,갤러리,디스코드,이미지공유">
+<meta name="author" content="RANL AD">
+<meta name="robots" content="index, follow">
+<meta property="og:type" content="website">
 <meta property="og:title" content="RANL AD — 소셜 커뮤니티">
+<meta property="og:description" content="RANL AD 소셜 커뮤니티에 오신 것을 환영합니다. 게시판, 갤러리, 실시간 소통">
 <meta property="og:image" content="https://i.imgur.com/7W1eg5S.png">
+<meta property="og:url" content="https://rani-mall.xyz">
+<link rel="canonical" href="https://rani-mall.xyz">
 <link rel="icon" href="https://i.imgur.com/7W1eg5S.png">
-<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@300;400;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  /* RANL STUDIO 스타일 (Hero, 그리드, 마퀴) */
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: 'Noto Sans KR', sans-serif;
-    background: #0a0a0f;
-    color: #f0f0f0;
-    overflow-x: hidden;
-  }
-  nav {
-    position: sticky; top: 0; z-index: 100;
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 18px 60px;
-    background: rgba(10,10,15,0.92);
-    border-bottom: 1px solid rgba(79, 70, 229, 0.3);
-    backdrop-filter: blur(12px);
-  }
-  .logo {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: 26px; letter-spacing: 4px; color: #fff;
-  }
-  .logo span { color: #4f46e5; }
-  .nav-links { display: flex; gap: 1.5rem; }
-  .nav-links a { color: #bbb; font-size: 0.9rem; font-weight: 500; text-decoration: none; transition: 0.2s; }
-  .nav-links a:hover, .nav-links a.on { color: #4f46e5; }
-  .user-area { display: flex; gap: 1rem; align-items: center; }
-  .btn-login { background: #4f46e5; color: #fff; border: none; padding: 8px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+:root{
+  --bg:#f1f3f6;
+  --surface:#ffffff;
+  --surface2:#f9fafc;
+  --bd:#e4e4e4;
+  --accent:#0d4bc1;
+  --accent2:#5865f2;
+  --accent3:#fb582a;
+  --text:#071021;
+  --text2:#7a7e83;
+  --text3:#9c9da1;
+  --success:#22c55e;
+  --danger:#ef4444;
+  --rad:8px;
+}
+body.dark{
+  --bg:#071021;
+  --surface:#0f1929;
+  --surface2:#181f2d;
+  --bd:#2d3036;
+  --text:#fcfcfc;
+  --text2:#bfc2c9;
+  --text3:#96999f;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);font-family:'Noto Sans KR',sans-serif;color:var(--text);font-size:14px;line-height:1.6;min-height:100vh;}
+a{color:inherit;text-decoration:none;}
+#topbar{background:var(--accent2);color:#fff;font-size:.72rem;padding:.35rem 0;}
+.tb-inner{max-width:1280px;margin:0 auto;padding:0 1.2rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;}
+.tb-left,.tb-right{display:flex;gap:1rem;align-items:center;}
+#topbar a{color:rgba(255,255,255,.85);}
+#topbar a:hover{color:#fff;}
+.online-dot{width:6px;height:6px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:.25rem;animation:blink 2s infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+#site-header{background:var(--surface);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:200;}
+.header-inner{max-width:1280px;margin:0 auto;padding:0 1.2rem;display:flex;align-items:center;height:58px;}
+.site-logo{font-family:'Inter',sans-serif;font-size:1.25rem;font-weight:700;color:var(--accent);margin-right:2rem;cursor:pointer;}
+.site-logo span{color:var(--accent3);}
+.main-nav{display:flex;flex:1;}
+.main-nav a{color:var(--text2);padding:0 .85rem;font-size:.82rem;font-weight:500;border-bottom:2px solid transparent;}
+.main-nav a:hover,.main-nav a.on{color:var(--accent);border-bottom-color:var(--accent);}
+.header-right{margin-left:auto;display:flex;gap:.5rem;align-items:center;}
+.user-chip{display:flex;align-items:center;gap:.5rem;padding:.3rem .6rem;border-radius:var(--rad);cursor:pointer;}
+.user-chip:hover{background:rgba(13,75,193,.06);}
+.user-av{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;}
+.wrap{max-width:1280px;margin:0 auto;padding:1.2rem;}
+.social-layout{display:grid;grid-template-columns:230px 1fr 220px;gap:1.2rem;}
+.left-sb .sb-card,.right-sb .sb-card{background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);overflow:hidden;margin-bottom:1rem;}
+.sb-card-head{padding:.6rem .9rem;font-size:.78rem;font-weight:700;color:var(--accent);border-bottom:1px solid var(--bd);background:var(--surface2);display:flex;justify-content:space-between;}
+.sb-card-body{padding:.6rem .9rem;}
+.side-menu{list-style:none;}
+.side-menu li a{display:flex;align-items:center;gap:.5rem;padding:.42rem .3rem;font-size:.8rem;color:var(--text2);border-radius:5px;}
+.side-menu li a:hover,.side-menu li a.on{color:var(--accent);background:rgba(13,75,193,.05);}
+.side-menu li a .mi{width:18px;}
+.member-avatars{display:flex;flex-wrap:wrap;gap:.4rem;}
+.mavatar{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#a78bfa);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:700;cursor:pointer;position:relative;}
+.mavatar .mavatar-tip{position:absolute;bottom:0;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);color:#fff;font-size:.6rem;white-space:nowrap;padding:.1rem .3rem;border-radius:3px;display:none;}
+.mavatar:hover .mavatar-tip{display:block;}
+.write-trigger{background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);padding:.85rem 1rem;margin-bottom:1rem;display:flex;align-items:center;gap:.8rem;cursor:pointer;}
+.write-trigger:hover{border-color:var(--accent);}
+.wt-av{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;}
+.wt-input{flex:1;background:var(--surface2);border:1px solid var(--bd);border-radius:40px;padding:.45rem 1rem;font-size:.82rem;color:var(--text3);pointer-events:none;}
+.feed-tabs{display:flex;background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);overflow:hidden;margin-bottom:1rem;}
+.feed-tab{flex:1;padding:.55rem;text-align:center;font-size:.78rem;font-weight:500;cursor:pointer;color:var(--text2);border-right:1px solid var(--bd);}
+.feed-tab:last-child{border-right:none;}
+.feed-tab:hover{background:var(--surface2);color:var(--accent);}
+.feed-tab.on{background:var(--accent);color:#fff;}
+.activity-item{background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);padding:1rem;margin-bottom:.9rem;}
+.ai-header{display:flex;gap:.7rem;margin-bottom:.8rem;}
+.ai-avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#a78bfa);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.95rem;font-weight:700;}
+.ai-meta{flex:1;}
+.ai-nick{font-size:.85rem;font-weight:700;}
+.ai-time{font-size:.7rem;color:var(--text3);}
+.ai-cat{display:inline-block;background:rgba(13,75,193,.1);color:var(--accent);font-size:.62rem;padding:.05rem .4rem;border-radius:3px;margin-left:.3rem;}
+.ai-game{display:inline-block;background:rgba(88,101,242,.1);color:var(--accent2);font-size:.6rem;padding:.05rem .4rem;border-radius:3px;margin-left:.3rem;}
+.ai-body{font-size:.85rem;color:var(--text2);margin-bottom:.8rem;}
+.ai-actions{display:flex;gap:.5rem;border-top:1px solid var(--bd);padding-top:.7rem;}
+.ai-btn{display:flex;align-items:center;gap:.3rem;padding:.3rem .7rem;border-radius:5px;border:1px solid var(--bd);background:transparent;color:var(--text2);cursor:pointer;font-size:.75rem;}
+.ai-btn:hover{border-color:var(--accent);color:var(--accent);}
+.ai-btn.del{border-color:var(--danger);color:var(--danger);}
+.ai-btn.del:hover{background:var(--danger);color:#fff;}
+.comments-area{margin-top:.8rem;padding-top:.7rem;border-top:1px solid var(--bd);}
+.cmt-item{display:flex;gap:.6rem;margin-bottom:.6rem;}
+.cmt-av{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#a78bfa,#60a5fa);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;}
+.cmt-content{flex:1;background:var(--surface2);border-radius:var(--rad);padding:.4rem .7rem;}
+.cmt-nick{font-size:.75rem;font-weight:700;}
+.cmt-date{font-size:.65rem;color:var(--text3);margin-left:.4rem;}
+.cmt-body{font-size:.78rem;color:var(--text2);margin-top:.1rem;}
+.cmt-write{display:flex;gap:.5rem;margin-top:.5rem;}
+.cmt-write input{flex:1;background:var(--surface2);border:1px solid var(--bd);border-radius:40px;padding:.38rem .8rem;font-size:.78rem;outline:none;}
+.cmt-write button{background:var(--accent);color:#fff;border:none;border-radius:5px;padding:.38rem .8rem;font-size:.75rem;cursor:pointer;}
+.board-section{background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);overflow:hidden;margin-bottom:1rem;}
+.board-head{display:grid;grid-template-columns:50px 1fr 80px 72px 42px 42px;padding:.55rem .9rem;background:var(--surface2);border-bottom:1px solid var(--bd);font-size:.72rem;color:var(--text3);}
+.board-row{display:grid;grid-template-columns:50px 1fr 80px 72px 42px 42px;padding:.65rem .9rem;border-bottom:1px solid rgba(0,0,0,.04);align-items:center;font-size:.8rem;cursor:pointer;}
+.board-row:hover{background:rgba(13,75,193,.03);}
+.b-num{text-align:center;font-size:.72rem;}
+.b-title{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+.bcat{color:var(--accent);font-size:.68rem;margin-right:.25rem;}
+.bgame{color:var(--accent2);font-size:.65rem;margin-left:.25rem;}
+.b-author{font-size:.73rem;color:var(--text2);}
+.b-date{font-size:.7rem;color:var(--text3);}
+.b-hit,.b-like{font-size:.7rem;color:var(--text3);text-align:right;}
+.empty-row{text-align:center;padding:2rem;color:var(--text3);}
+.bdg{display:inline-block;padding:.08rem .38rem;border-radius:3px;font-size:.62rem;font-weight:700;}
+.bdg-notice{background:var(--accent);color:#fff;}
+.bdg-new{background:var(--danger);color:#fff;margin-left:.25rem;}
+.bdg-hot{background:#f97316;color:#fff;margin-left:.25rem;}
+.lv-badge{display:inline-block;padding:.06rem .38rem;border-radius:3px;font-size:.62rem;font-weight:700;}
+.lv1{background:#e2e8f0;color:#475569;}
+.lv-max{background:linear-gradient(135deg,#ffd700,#f97316);color:#000;}
+.my-profile-card{text-align:center;padding:.8rem .9rem;}
+.my-cover{height:55px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:var(--rad) var(--rad) 0 0;margin:-1rem -1rem 0;}
+.my-av-wrap{margin-top:-22px;}
+.my-av{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:700;margin:0 auto .4rem;border:2px solid var(--surface);}
+.my-nick{font-size:.82rem;font-weight:700;}
+.my-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.3rem;margin:.6rem 0;}
+.my-stat{background:var(--surface2);border-radius:5px;padding:.35rem;}
+.my-stat .n{font-size:.85rem;font-weight:700;color:var(--accent);}
+.my-stat .l{font-size:.6rem;color:var(--text3);}
+.my-btns{display:flex;gap:.3rem;margin-top:.4rem;}
+.my-btn{flex:1;padding:.38rem;border-radius:5px;font-size:.72rem;font-weight:600;cursor:pointer;border:none;}
+.mb-primary{background:var(--accent);color:#fff;}
+.mb-danger{background:rgba(239,68,68,.1);color:var(--danger);border:1px solid rgba(239,68,68,.3);}
+.vis-count{font-size:.9rem;font-weight:700;color:var(--accent);margin-bottom:.4rem;}
+.vis-item{display:flex;align-items:center;gap:.4rem;padding:.2rem 0;font-size:.73rem;}
+.vis-dot{width:7px;height:7px;border-radius:50%;background:var(--success);}
+.rate-num{font-size:1.3rem;font-weight:800;font-family:'Inter',sans-serif;}
+.rate-chg{font-size:.75rem;font-weight:600;margin:.15rem 0;}
+.rate-detail{display:flex;justify-content:space-between;font-size:.7rem;color:var(--text3);}
+.event-list{list-style:none;}
+.event-list li{padding:.38rem 0;border-bottom:1px solid rgba(0,0,0,.04);font-size:.75rem;}
+.event-list li:last-child{border-bottom:none;}
+.event-list a{display:flex;gap:.4rem;align-items:flex-start;}
+.event-list a:hover{color:var(--accent);}
+.ev-tag{background:rgba(13,75,193,.12);color:var(--accent);font-size:.6rem;padding:.04rem .35rem;border-radius:3px;}
+.paging{display:flex;justify-content:center;gap:.3rem;margin:.8rem 0;}
+.paging button{min-width:28px;height:28px;border-radius:4px;border:1px solid var(--bd);background:var(--surface);color:var(--text2);cursor:pointer;font-size:.78rem;}
+.paging button:hover,.paging button.on{background:var(--accent);color:#fff;}
+.page{display:none;}
+.page.active{display:block;}
+.detail-card{background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);padding:1.2rem;margin-bottom:.8rem;}
+.detail-title{font-size:1rem;font-weight:700;margin-bottom:.6rem;}
+.detail-meta{display:flex;gap:.9rem;font-size:.72rem;color:var(--text3);padding-bottom:.7rem;border-bottom:1px solid var(--bd);margin-bottom:1rem;flex-wrap:wrap;}
+.detail-body{font-size:.86rem;color:var(--text2);min-height:80px;}
+.detail-foot{display:flex;gap:.5rem;margin-top:1rem;padding-top:.8rem;border-top:1px solid var(--bd);}
+.cmt-section{background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);padding:1rem;margin-bottom:.8rem;}
+.cmt-section h4{font-size:.82rem;font-weight:700;color:var(--accent);margin-bottom:.8rem;}
+.cmt-full-write{display:flex;gap:.5rem;margin-top:.8rem;}
+.cmt-full-write textarea{flex:1;background:var(--surface2);border:1px solid var(--bd);border-radius:var(--rad);padding:.5rem .7rem;font-size:.8rem;resize:none;height:58px;outline:none;}
+.write-card{background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);padding:1.2rem;}
+.write-card-head{font-size:.88rem;font-weight:700;padding-bottom:.8rem;border-bottom:1px solid var(--bd);margin-bottom:1rem;display:flex;justify-content:space-between;}
+.fi{width:100%;background:var(--surface2);border:1px solid var(--bd);border-radius:var(--rad);padding:.52rem .7rem;font-size:.84rem;outline:none;margin-bottom:.7rem;}
+textarea.fi{resize:vertical;height:200px;}
+.admin-panel{background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);}
+.admin-panel-head{padding:.7rem 1rem;font-size:.85rem;font-weight:700;border-bottom:1px solid var(--bd);background:var(--surface2);color:var(--danger);}
+.admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:.7rem;padding:1rem;border-bottom:1px solid var(--bd);}
+.astat{background:var(--surface2);border-radius:var(--rad);padding:.7rem;text-align:center;}
+.astat .n{font-size:1.2rem;font-weight:800;color:var(--accent);}
+.astat .l{font-size:.68rem;color:var(--text3);}
+.admin-table{width:100%;border-collapse:collapse;font-size:.78rem;}
+.admin-table th{padding:.5rem .7rem;text-align:left;border-bottom:1px solid var(--bd);background:var(--surface2);}
+.admin-table td{padding:.5rem .7rem;border-bottom:1px solid rgba(0,0,0,.04);}
+.a-btn{padding:.22rem .55rem;border-radius:4px;font-size:.7rem;font-weight:600;cursor:pointer;border:none;}
+.a-btn-primary{background:var(--accent);color:#fff;}
+.a-btn-danger{background:var(--danger);color:#fff;}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;align-items:center;justify-content:center;}
+.modal-overlay.show{display:flex;}
+.modal-box{background:var(--surface);border:1px solid var(--bd);border-radius:12px;width:100%;max-width:360px;padding:1.5rem;position:relative;}
+.modal-close{position:absolute;top:.9rem;right:.9rem;background:none;border:none;font-size:1rem;cursor:pointer;}
+.modal-tabs{display:flex;background:var(--surface2);border-radius:6px;padding:3px;margin-bottom:1rem;}
+.modal-tab{flex:1;padding:.4rem;text-align:center;cursor:pointer;border-radius:5px;font-size:.78rem;color:var(--text2);}
+.modal-tab.on{background:var(--accent);color:#fff;}
+.auth-input{width:100%;background:var(--surface2);border:1px solid var(--bd);border-radius:6px;padding:.55rem .8rem;font-size:.83rem;outline:none;margin-bottom:.7rem;}
+.auth-btn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:6px;padding:.6rem;font-size:.83rem;font-weight:700;cursor:pointer;}
+.auth-msg{text-align:center;font-size:.72rem;margin-top:.4rem;}
+.popup-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:2000;align-items:center;justify-content:center;}
+.popup-overlay.show{display:flex;}
+.popup-box{background:var(--surface);border:2px solid var(--accent);border-radius:12px;width:90%;max-width:440px;padding:1.5rem;}
+.popup-btns{display:flex;gap:.5rem;margin-top:1rem;}
+.popup-btns button{flex:1;padding:.42rem;border-radius:6px;cursor:pointer;font-size:.78rem;}
+.pb-close{background:var(--accent);color:#fff;border:none;}
+.pb-today{background:var(--surface2);border:1px solid var(--bd);}
+.toast{position:fixed;bottom:1.5rem;right:1.5rem;background:#1e293b;color:#fff;border-radius:8px;padding:.6rem 1rem;font-size:.78rem;z-index:9000;transform:translateY(80px);opacity:0;transition:.3s;}
+.toast.show{transform:translateY(0);opacity:1;}
+.theme-btn{position:fixed;bottom:1.2rem;right:1.2rem;width:38px;height:38px;border-radius:50%;background:var(--surface);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:.95rem;}
+footer{background:var(--surface);border-top:1px solid var(--bd);padding:1rem;text-align:center;font-size:.7rem;color:var(--text3);margin-top:1.5rem;}
 
-  .hero {
-    min-height: 70vh; display: flex; align-items: center; position: relative; overflow: hidden; padding: 80px 60px;
-  }
-  .hero-bg {
-    position: absolute; inset: 0;
-    background: radial-gradient(ellipse at 70% 50%, rgba(79, 70, 229, 0.18) 0%, transparent 65%),
-                radial-gradient(ellipse at 20% 80%, rgba(79, 70, 229, 0.12) 0%, transparent 50%),
-                #0a0a0f;
-  }
-  .hero-grid {
-    position: absolute; inset: 0;
-    background-image: linear-gradient(rgba(79, 70, 229, 0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(79, 70, 229, 0.04) 1px, transparent 1px);
-    background-size: 60px 60px;
-  }
-  .hero-content { position: relative; z-index: 2; max-width: 700px; }
-  .hero-tag { display: inline-block; border: 1px solid #4f46e5; color: #4f46e5; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; padding: 6px 16px; margin-bottom: 32px; }
-  .hero-title { font-family: 'Black Han Sans', sans-serif; font-size: clamp(52px, 8vw, 96px); line-height: 1; letter-spacing: -1px; margin-bottom: 8px; }
-  .hero-title .accent { color: #4f46e5; }
-  .hero-desc { font-size: 16px; line-height: 1.8; color: #bbb; max-width: 480px; margin-bottom: 48px; }
-  .hero-btns { display: flex; gap: 16px; flex-wrap: wrap; }
-  .btn-primary {
-    display: inline-block; background: #4f46e5; color: #fff; border: none; padding: 16px 40px;
-    font-size: 14px; letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
-    clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%);
-    text-decoration: none; transition: 0.2s;
-  }
-  .btn-primary:hover { background: #6366f1; transform: translateY(-2px); }
+/* 공지 마퀴 스타일 */
+.marquee-container{background:linear-gradient(90deg,var(--accent),var(--accent2));color:#fff;padding:0.5rem 0;overflow:hidden;white-space:nowrap;border-radius:8px;margin-bottom:1rem;position:relative;}
+.marquee-content{display:inline-block;animation:marquee 25s linear infinite;padding-left:100%;}
+.marquee-content span{margin-right:2.5rem;font-size:0.8rem;}
+.marquee-content a{color:#fff;text-decoration:none;}
+.marquee-content a:hover{text-decoration:underline;}
+@keyframes marquee{0%{transform:translate(0,0);}100%{transform:translate(-100%,0);}}
+.marquee-container:hover .marquee-content{animation-play-state:paused;}
 
-  .marquee-section {
-    border-top: 1px solid rgba(79, 70, 229, 0.2); border-bottom: 1px solid rgba(79, 70, 229, 0.2);
-    padding: 20px 0; overflow: hidden; background: rgba(79, 70, 229, 0.04);
-  }
-  .marquee-track {
-    display: flex; gap: 60px; width: max-content; animation: scroll 20s linear infinite;
-  }
-  .marquee-track span {
-    font-family: 'Black Han Sans', sans-serif; font-size: 13px; letter-spacing: 4px;
-    text-transform: uppercase; white-space: nowrap; color: #444;
-  }
-  .marquee-track span.purple { color: #4f46e5; }
-  @keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+/* 접속자 깜빡임 효과 */
+.vis-dot{animation:pulse 1.5s infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.5;transform:scale(0.8);}}
 
-  /* --- 커뮤니티 대시보드 섹션 (통계 + 게시판) --- */
-  .dashboard-section {
-    max-width: 1280px; margin: 0 auto; padding: 60px 40px;
-  }
-  .stats-grid {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-bottom: 48px;
-  }
-  .stat-card {
-    background: rgba(20, 20, 30, 0.7); border: 1px solid rgba(79, 70, 229, 0.2);
-    border-radius: 12px; padding: 28px 24px; backdrop-filter: blur(8px);
-  }
-  .stat-value { font-family: 'Black Han Sans', sans-serif; font-size: 36px; color: #4f46e5; }
-  .stat-label { color: #888; text-transform: uppercase; letter-spacing: 2px; font-size: 11px; margin-top: 8px; }
+/* 갤러리 스타일 */
+.gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem;margin-bottom:1rem;}
+.gallery-item{background:var(--surface);border:1px solid var(--bd);border-radius:var(--rad);overflow:hidden;transition:transform .2s;}
+.gallery-item:hover{transform:translateY(-4px);}
+.gallery-image{width:100%;height:200px;object-fit:cover;cursor:pointer;background:var(--surface2);}
+.gallery-info{padding:.8rem;}
+.gallery-title{font-size:.85rem;font-weight:700;margin-bottom:.3rem;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+.gallery-meta{display:flex;justify-content:space-between;align-items:center;margin-top:.5rem;font-size:.7rem;color:var(--text3);}
+.gallery-like{display:flex;align-items:center;gap:.3rem;cursor:pointer;}
+.gallery-like:hover{color:var(--danger);}
+.upload-area{border:2px dashed var(--bd);border-radius:var(--rad);padding:1rem;text-align:center;margin-bottom:1rem;cursor:pointer;}
+.upload-area:hover{border-color:var(--accent);}
+.image-preview{max-width:100%;max-height:200px;margin-top:.5rem;border-radius:var(--rad);display:none;}
+.gallery-modal{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:3000;display:none;align-items:center;justify-content:center;}
+.gallery-modal.show{display:flex;}
+.gallery-modal img{max-width:90%;max-height:90%;border-radius:8px;}
+.gallery-modal-close{position:absolute;top:1rem;right:1rem;color:#fff;font-size:2rem;cursor:pointer;background:none;border:none;}
 
-  .board-panel {
-    background: rgba(15, 15, 22, 0.8); border: 1px solid rgba(79, 70, 229, 0.2);
-    border-radius: 16px; padding: 32px; backdrop-filter: blur(8px);
-  }
-  .panel-header {
-    display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;
-    border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 16px;
-  }
-  .panel-title { font-family: 'Black Han Sans', sans-serif; font-size: 24px; letter-spacing: -0.5px; }
-  .panel-title i { color: #4f46e5; margin-right: 8px; }
-
-  .board-table { width: 100%; border-collapse: collapse; }
-  .board-table th { text-align: left; padding: 12px 8px; color: #666; font-weight: 400; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-  .board-table td { padding: 14px 8px; border-bottom: 1px solid rgba(255,255,255,0.03); color: #ccc; }
-  .board-table tr:hover td { background: rgba(79, 70, 229, 0.05); cursor: pointer; }
-  .badge-notice { background: #4f46e5; color: #fff; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: 700; }
-  .badge-new { background: #ef4444; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 9px; margin-left: 6px; }
-  .post-title { color: #f0f0f0; }
-
-  .page { display: none; }
-  .page.active { display: block; }
-
-  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(6px); z-index: 1000; align-items: center; justify-content: center; }
-  .modal-overlay.show { display: flex; }
-  .modal-box { background: #15151e; border: 1px solid #4f46e5; border-radius: 16px; padding: 32px; width: 100%; max-width: 400px; }
-  .modal-box h3 { color: #4f46e5; margin-bottom: 24px; }
-  .auth-input { width: 100%; background: #0a0a0f; border: 1px solid #333; border-radius: 8px; padding: 12px 16px; color: #fff; margin-bottom: 16px; outline: none; }
-  .auth-btn { width: 100%; background: #4f46e5; color: #fff; border: none; border-radius: 8px; padding: 14px; font-weight: 700; cursor: pointer; }
-  .write-card { background: #15151e; border: 1px solid #4f46e5; border-radius: 16px; padding: 32px; max-width: 800px; margin: 40px auto; }
-  .write-card textarea { min-height: 200px; }
-
-  @media (max-width: 768px) {
-    nav { padding: 18px 20px; }
-    .nav-links { display: none; }
-    .hero { padding: 60px 20px; }
-    .stats-grid { grid-template-columns: 1fr 1fr; }
-  }
+@media(max-width:1024px){.social-layout{grid-template-columns:200px 1fr;}.right-sb{display:none;}}
+@media(max-width:768px){.social-layout{grid-template-columns:1fr;}.left-sb{display:none;}.board-head,.board-row{grid-template-columns:1fr 68px 40px;}.b-num,.b-author,.b-like{display:none;}}
 </style>
 </head>
-<body>
+<body class="light">
 
-<nav>
-  <div class="logo"><span>RANL</span> STUDIO</div>
-  <div class="nav-links">
-    <a href="#" onclick="goPage('home');return false;" class="on" id="nav-home">홈</a>
-    <a href="#" onclick="goPage('board','자유게시판');return false;" id="nav-free">자유게시판</a>
-    <a href="#" onclick="goPage('board','공략게시판');return false;" id="nav-tip">공략</a>
-    <a href="#" onclick="goPage('gallery');return false;" id="nav-gallery">갤러리</a>
-  </div>
-  <div class="user-area">
-    <?php if($currentUser): ?>
-      <span><?= h($currentUser['nick']) ?> <?= lvBadge($currentUser['lv']) ?></span>
-      <button class="btn-login" onclick="doLogout()">로그아웃</button>
-    <?php else: ?>
-      <button class="btn-login" onclick="showModal('login')">로그인</button>
-    <?php endif; ?>
-  </div>
-</nav>
-
-<!-- 메인 페이지 (HOME) -->
-<div id="page-home" class="page active">
-  <section class="hero">
-    <div class="hero-bg"></div><div class="hero-grid"></div>
-    <div class="hero-content">
-      <div class="hero-tag">RANL AD · COMMUNITY</div>
-      <h1 class="hero-title">BUILD<br><span class="accent">YOUR</span><br>LEGACY</h1>
-      <p class="hero-desc">자유 게시판, 갤러리, 실시간 피드까지. RANL AD에서 특별한 커뮤니티 경험을 시작하세요.</p>
-      <div class="hero-btns">
-        <a href="#" onclick="goPage('write');return false;" class="btn-primary">글쓰기</a>
-        <a href="#" onclick="goPage('board');return false;" class="btn-primary" style="background:transparent; border:1px solid #4f46e5;">둘러보기</a>
-      </div>
+<div id="topbar">
+  <div class="tb-inner">
+    <div class="tb-left">
+      <span><span class="online-dot"></span><span id="tb-online">0</span>명 접속중</span>
+      <span id="tb-date"></span>
+      <span id="tb-clock"></span>
     </div>
-  </section>
-
-  <div class="marquee-section">
-    <div class="marquee-track">
-      <?php if(count($noticePosts) > 0): ?>
-        <?php foreach($noticePosts as $notice): ?>
-          <span class="purple">📢 <?= h($notice['title']) ?></span>
-        <?php endforeach; ?>
-      <?php else: ?>
-        <span class="purple">✨ RANL AD 커뮤니티에 오신 것을 환영합니다! ✨</span>
-      <?php endif; ?>
-      <?php if(count($noticePosts) > 0): ?>
-        <?php foreach($noticePosts as $notice): ?>
-          <span class="purple">📢 <?= h($notice['title']) ?></span>
-        <?php endforeach; ?>
-      <?php else: ?>
-        <span class="purple">✨ RANL AD 커뮤니티에 오신 것을 환영합니다! ✨</span>
-      <?php endif; ?>
-    </div>
-  </div>
-
-  <div class="dashboard-section">
-    <div class="stats-grid">
-      <div class="stat-card"><div class="stat-value"><?= $totalPosts ?></div><div class="stat-label">전체 게시글</div></div>
-      <div class="stat-card"><div class="stat-value"><?= $memberCount ?></div><div class="stat-label">회원 수</div></div>
-      <div class="stat-card"><div class="stat-value" id="online-count">0</div><div class="stat-label">현재 접속자</div></div>
-      <div class="stat-card"><div class="stat-value">100%</div><div class="stat-label">응답률</div></div>
-    </div>
-
-    <div class="board-panel">
-      <div class="panel-header">
-        <div class="panel-title"><i>📌</i> 최신 게시글</div>
-        <a href="#" onclick="goPage('board');return false;" style="color:#4f46e5; font-size:14px;">전체보기 →</a>
-      </div>
-      <table class="board-table">
-        <thead><tr><th>번호</th><th>제목</th><th>작성자</th><th>날짜</th><th>조회</th></tr></thead>
-        <tbody id="home-post-list"></tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-<!-- 게시판 페이지 -->
-<div id="page-board" class="page">
-  <div class="dashboard-section" style="padding-top:40px;">
-    <div class="board-panel">
-      <div class="panel-header">
-        <div class="panel-title"><i>📋</i> <span id="board-title">자유게시판</span></div>
-        <button class="btn-primary" style="padding:10px 24px;" onclick="goPage('write')">글쓰기</button>
-      </div>
-      <table class="board-table">
-        <thead><tr><th>번호</th><th>제목</th><th>작성자</th><th>날짜</th><th>조회</th></tr></thead>
-        <tbody id="board-rows"></tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-<!-- 게시글 상세 페이지 -->
-<div id="page-post" class="page">
-  <div class="dashboard-section" style="padding-top:40px;">
-    <div class="board-panel" id="post-detail-content"></div>
-    <div class="board-panel" style="margin-top:24px;">
-      <div class="panel-title" style="margin-bottom:20px;"><i>💬</i> 댓글 <span id="cmt-cnt">0</span>개</div>
-      <div id="cmt-list"></div>
-      <textarea class="auth-input" id="cmt-input" placeholder="댓글을 입력하세요..." style="margin-top:20px;"></textarea>
-      <button class="btn-primary" style="padding:12px 30px; margin-top:10px;" onclick="submitComment()">등록</button>
-    </div>
-  </div>
-</div>
-
-<!-- 글쓰기 페이지 -->
-<div id="page-write" class="page">
-  <div class="write-card">
-    <h2 style="color:#4f46e5; margin-bottom:24px;">✏️ 글쓰기</h2>
-    <select class="auth-input" id="write-cat">
-      <option value="자유게시판">자유게시판</option>
-      <option value="공략게시판">공략게시판</option>
-      <option value="유머게시판">유머게시판</option>
-    </select>
-    <input class="auth-input" id="write-title" placeholder="제목">
-    <textarea class="auth-input" id="write-body" placeholder="내용"></textarea>
-    <button class="btn-primary" onclick="submitPost()">등록</button>
-  </div>
-</div>
-
-<!-- 갤러리 페이지 -->
-<div id="page-gallery" class="page">
-  <div class="dashboard-section">
-    <div class="board-panel">
-      <div class="panel-header">
-        <div class="panel-title"><i>📷</i> 갤러리</div>
-        <?php if($currentUser): ?>
-        <button class="btn-primary" style="padding:10px 24px;" onclick="openUploadModal()">이미지 업로드</button>
+    <div class="tb-right">
+      <?php if($currentUser): ?>
+        <?php if($currentUser['isAdmin']==1 || $currentUser['id']==='admin' || $currentUser['id']==='ranl'): ?>
+          <a href="#" onclick="goPage('admin');return false;" style="color:#fcd34d;">🔒관리자</a>
         <?php endif; ?>
+      <?php endif; ?>
+    </div>
+   </div>
+  </div> 
+
+<header id="site-header">
+  <div class="header-inner">
+    <div class="site-logo" onclick="goPage('home')">RANL<span>AD</span></div>
+    <nav class="main-nav">
+      <a href="#" onclick="goPage('home');return false;" class="on" id="nav-home">홈</a>
+      <a href="#" onclick="goPage('activity');return false;" id="nav-act">활동피드</a>
+      <a href="#" onclick="goPage('gallery');return false;" id="nav-gallery">📷 갤러리</a>
+      <a href="#" onclick="goPage('board','자유게시판');return false;" id="nav-free">자유게시판</a>
+      <a href="#" onclick="goPage('board','공략게시판');return false;" id="nav-tip">공략</a>
+      <a href="#" onclick="goPage('board','유머게시판');return false;" id="nav-fun">유머</a>
+      <a href="#" onclick="goPage('board','질문게시판');return false;" id="nav-qna">질문</a>
+      <a href="#" onclick="goPage('board','종합게임');return false;" id="nav-game">종합게임</a>
+    </nav>
+</header>
+
+<div class="wrap">
+  <!-- 공지 마퀴 -->
+  <div class="marquee-container">
+    <div class="marquee-content">
+      <?php if(count($noticePosts) > 0): ?>
+        <?php foreach($noticePosts as $notice): ?>
+          <span>📢 <a href="#" onclick="openPost(<?= $notice['id'] ?>);return false;">[공지] <?= h($notice['title']) ?></a></span>
+        <?php endforeach; ?>
+      <?php else: ?>
+        <span>✨ RANL AD 커뮤니티에 오신 것을 환영합니다! ✨</span>
+        <span>💬 자유롭게 소통하고 정보를 공유하세요</span>
+        <span>📷 갤러리에 이미지를 올려보세요</span>
+      <?php endif; ?>
+      <?php if(count($noticePosts) > 0): ?>
+        <?php foreach($noticePosts as $notice): ?>
+          <span>📢 <a href="#" onclick="openPost(<?= $notice['id'] ?>);return false;">[공지] <?= h($notice['title']) ?></a></span>
+        <?php endforeach; ?>
+      <?php else: ?>
+        <span>✨ RANL AD 커뮤니티에 오신 것을 환영합니다! ✨</span>
+        <span>💬 자유롭게 소통하고 정보를 공유하세요</span>
+        <span>📷 갤러리에 이미지를 올려보세요</span>
+      <?php endif; ?>
+    </div>
+  </div>
+
+  <div class="social-layout">
+
+    <div class="left-sb">
+      <div class="sb-card">
+        <div class="sb-card-head">메뉴</div>
+        <div class="sb-card-body">
+          <ul class="side-menu">
+            <li><a href="#" onclick="goPage('home');return false;" id="sm-home" class="on"><span class="mi">🏠</span>홈</a></li>
+            <li><a href="#" onclick="goPage('activity');return false;" id="sm-act"><span class="mi">📡</span>활동 피드</a></li>
+            <li><a href="#" onclick="goPage('gallery');return false;" id="sm-gallery"><span class="mi">📷</span>갤러리</a></li>
+            <li><a href="#" onclick="goPage('board','자유게시판');return false;" id="sm-free"><span class="mi">💬</span>자유게시판</a></li>
+            <li><a href="#" onclick="goPage('board','공략게시판');return false;" id="sm-tip"><span class="mi">🎮</span>공략게시판</a></li>
+            <li><a href="#" onclick="goPage('board','유머게시판');return false;" id="sm-fun"><span class="mi">😂</span>유머게시판</a></li>
+            <li><a href="#" onclick="goPage('board','질문게시판');return false;" id="sm-qna"><span class="mi">❓</span>질문게시판</a></li>
+            <li><a href="#" onclick="goPage('board','종합게임');return false;" id="sm-game"><span class="mi">🎲</span>종합게임</a></li>
+            <?php if($currentUser): ?>
+            <li><a href="#" onclick="goPage('profile');return false;" id="sm-my"><span class="mi">👤</span>내 프로필</a></li>
+            <?php endif; ?>
+            <?php if($currentUser && ($currentUser['isAdmin']==1 || $currentUser['id']==='admin')): ?>
+            <li><a href="#" onclick="goPage('admin');return false;" id="sm-admin" style="color:var(--danger)"><span class="mi">🔒</span>관리자</a></li>
+            <?php endif; ?>
+          </ul>
+        </div>
       </div>
-      <div id="gallery-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:20px;"></div>
+      <div class="sb-card">
+        <div class="sb-card-head">📊 사이트 통계</div>
+        <div class="sb-card-body">
+          전체 게시글 <strong id="stat-posts">0</strong><br>
+          접속 중 <strong style="color:var(--success)" id="ls-online">0</strong>명
+        </div>
+      </div>
+    </div>
+
+    <div id="main-content">
+
+      <div class="page active" id="page-home">
+        <?php if($currentUser): ?>
+        <div class="write-trigger" onclick="goPage('write')">
+          <div class="wt-av"><?= h(mb_substr($currentUser['nick'],0,1)) ?></div>
+          <div class="wt-input">무슨 생각을 하고 계신가요?</div>
+        </div>
+        <?php else: ?>
+        <div class="write-trigger" onclick="showModal('login')">
+          <div class="wt-av">👤</div>
+          <div class="wt-input">로그인하고 글을 작성해보세요</div>
+        </div>
+        <?php endif; ?>
+
+        <div style="margin-bottom:.8rem;">
+          <div style="border-bottom:2px solid var(--accent);margin-bottom:0;">
+            <h3 style="font-size:.78rem;font-weight:700;background:var(--accent);color:#fff;padding:.35rem .9rem;display:inline-block;">📌 공지사항</h3>
+          </div>
+          <div class="board-section" style="border-top:none;border-radius:0 var(--rad) var(--rad) var(--rad);">
+            <div class="board-head"><div>번호</div><div>제목</div><div>작성자</div><div>날짜</div><div>조회</div><div>추천</div></div>
+            <div id="home-notice-rows"></div>
+          </div>
+        </div>
+
+        <div style="margin-bottom:.8rem;">
+          <div style="border-bottom:2px solid var(--accent);margin-bottom:0;">
+            <h3 style="font-size:.78rem;font-weight:700;background:var(--accent);color:#fff;padding:.35rem .9rem;display:inline-block;">🔥 인기 게시글</h3>
+            <a href="#" onclick="goPage('board');return false;" style="float:right;font-size:.72rem;color:var(--text3);padding:.35rem 0;">더보기 →</a>
+          </div>
+          <div class="board-section" style="border-top:none;border-radius:0 var(--rad) var(--rad) var(--rad);">
+            <div class="board-head"><div>번호</div><div>제목</div><div>작성자</div><div>날짜</div><div>조회</div><div>추천</div></div>
+            <div id="home-hot-rows"></div>
+          </div>
+        </div>
+
+        <div>
+          <div style="border-bottom:2px solid var(--accent);margin-bottom:0;">
+            <h3 style="font-size:.78rem;font-weight:700;background:var(--accent);color:#fff;padding:.35rem .9rem;display:inline-block;">🆕 최신 게시글</h3>
+            <a href="#" onclick="goPage('board');return false;" style="float:right;font-size:.72rem;color:var(--text3);padding:.35rem 0;">더보기 →</a>
+          </div>
+          <div class="board-section" style="border-top:none;border-radius:0 var(--rad) var(--rad) var(--rad);">
+            <div class="board-head"><div>번호</div><div>제목</div><div>작성자</div><div>날짜</div><div>조회</div><div>추천</div></div>
+            <div id="home-new-rows"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page" id="page-activity">
+        <?php if($currentUser): ?>
+        <div class="write-trigger" onclick="goPage('write')">
+          <div class="wt-av"><?= h(mb_substr($currentUser['nick'],0,1)) ?></div>
+          <div class="wt-input">지금 무슨 생각을 하고 계신가요?</div>
+        </div>
+        <?php endif; ?>
+        <div class="feed-tabs">
+          <div class="feed-tab on" onclick="setFeedFilter('all',this)">전체</div>
+          <div class="feed-tab" onclick="setFeedFilter('자유게시판',this)">자유</div>
+          <div class="feed-tab" onclick="setFeedFilter('공략게시판',this)">공략</div>
+          <div class="feed-tab" onclick="setFeedFilter('유머게시판',this)">유머</div>
+          <div class="feed-tab" onclick="setFeedFilter('질문게시판',this)">질문</div>
+          <div class="feed-tab" onclick="setFeedFilter('종합게임',this)">종합게임</div>
+        </div>
+        <div id="activity-feed"></div>
+      </div>
+      
+      <div class="page" id="page-gallery">
+        <div style="display:flex;justify-content:space-between;margin-bottom:.6rem;">
+          <h2 style="font-size:.9rem;color:var(--accent);">📷 갤러리</h2>
+          <?php if($currentUser): ?>
+          <button onclick="openUploadModal()" style="background:var(--accent);color:#fff;border:none;border-radius:5px;padding:.38rem .9rem;font-size:.76rem;cursor:pointer;">📤 이미지 업로드</button>
+          <?php endif; ?>
+        </div>
+        
+        <div id="upload-area" class="upload-area" style="display:none;" onclick="document.getElementById('gallery-file').click()">
+          <div>📸 클릭하여 이미지 업로드</div>
+          <input type="file" id="gallery-file" accept="image/*" style="display:none;" onchange="previewAndUpload(this)">
+          <img id="image-preview" class="image-preview">
+        </div>
+        
+        <div id="gallery-grid" class="gallery-grid">
+          <div style="text-align:center;padding:2rem;">로딩중...</div>
+        </div>
+      </div>
+      
+      <div id="gallery-modal" class="gallery-modal" onclick="closeGalleryModal()">
+        <button class="gallery-modal-close" onclick="closeGalleryModal()">×</button>
+        <img id="modal-image" src="">
+      </div>
+
+      <div class="page" id="page-board">
+        <div style="display:flex;justify-content:space-between;margin-bottom:.6rem;">
+          <h2 id="board-title" style="font-size:.9rem;color:var(--accent);">자유게시판</h2>
+          <div><input type="text" id="search-input" placeholder="검색" style="background:var(--surface2);border:1px solid var(--bd);border-radius:5px;padding:.35rem .7rem;font-size:.76rem;width:120px;" onkeydown="if(event.key==='Enter')doSearch()"> <button onclick="doSearch()" class="a-btn a-btn-primary">검색</button></div>
+        </div>
+        <div style="text-align:right;margin-bottom:.5rem;"><button onclick="tryWrite()" style="background:var(--accent);color:#fff;border:none;border-radius:5px;padding:.38rem .9rem;font-size:.76rem;cursor:pointer;">✏️ 글쓰기</button></div>
+        <div class="board-section">
+          <div class="board-head"><div>번호</div><div>제목</div><div>작성자</div><div>날짜</div><div>조회</div><div>추천</div></div>
+          <div id="board-rows"></div>
+        </div>
+        <div class="paging" id="board-paging"></div>
+      </div>
+
+      <div class="page" id="page-post">
+        <div style="margin-bottom:.6rem;"><button class="ai-btn" onclick="goBack()">← 목록으로</button></div>
+        <div class="detail-card" id="post-detail-content"></div>
+        <div class="cmt-section">
+          <h4>💬 댓글 <span id="cmt-cnt">0</span>개</h4>
+          <div id="cmt-list"></div>
+          <div class="cmt-full-write">
+            <textarea id="cmt-input" placeholder="댓글을 입력하세요..."></textarea>
+            <button onclick="submitComment()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--rad);padding:.5rem .9rem;cursor:pointer;">등록</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="page" id="page-write">
+        <div style="margin-bottom:.6rem;"><button class="ai-btn" onclick="goBack()">← 취소</button></div>
+        <div class="write-card">
+          <div class="write-card-head">✏️ 글쓰기</div>
+          <select class="fi" id="write-cat">
+            <option value="자유게시판">자유게시판</option>
+            <option value="공략게시판">공략게시판</option>
+            <option value="유머게시판">유머게시판</option>
+            <option value="질문게시판">질문게시판</option>
+            <option value="종합게임">종합게임</option>
+          </select>
+          <select class="fi" id="write-game">
+            <option value="">게임 선택 (선택사항)</option>
+            <option value="스팀">🎮 스팀</option>
+            <option value="넥슨">🎮 넥슨</option>
+            <option value="배틀그라운드">🔫 배틀그라운드</option>
+            <option value="마인크래프트">⛏️ 마인크래프트</option>
+            <option value="롤(LOL)">⚔️ 롤(LOL)</option>
+            <option value="로스트아크">🗡️ 로스트아크</option>
+            <option value="디아블로4">😈 디아블로4</option>
+            <option value="GTA5">🚗 GTA5</option>
+            <option value="오버워치2">🎯 오버워치2</option>
+            <option value="피파온라인4">⚽ 피파온라인4</option>
+            <option value="메이플스토리">🍁 메이플스토리</option>
+          </select>
+          <input class="fi" id="write-title" placeholder="제목">
+          <textarea class="fi" id="write-body" placeholder="내용"></textarea>
+          <div id="notice-chk-wrap" style="display:none;margin-bottom:.7rem;"><label><input type="checkbox" id="write-notice"> 📌 공지사항 등록</label></div>
+          <div style="display:flex;gap:.5rem;justify-content:flex-end;">
+            <button onclick="goBack()" class="ai-btn">취소</button>
+            <button onclick="submitPost()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--rad);padding:.5rem 1.2rem;cursor:pointer;">등록</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="page" id="page-profile">
+        <div id="profile-box"></div>
+        <div style="border-bottom:2px solid var(--accent);margin-bottom:0;">
+          <h3 style="font-size:.78rem;font-weight:700;background:var(--accent);color:#fff;padding:.35rem .9rem;display:inline-block;">📝 내가 쓴 글</h3>
+        </div>
+        <div class="board-section" style="border-top:none;">
+          <div class="board-head"><div>번호</div><div>제목</div><div>작성자</div><div>날짜</div><div>조회</div><div>추천</div></div>
+          <div id="my-post-rows"></div>
+        </div>
+      </div>
+
+      <div class="page" id="page-admin">
+        <div class="admin-panel">
+          <div class="admin-panel-head">🔒 관리자 패널</div>
+          <div class="admin-stats">
+            <div class="astat"><div class="n" id="admin-posts">0</div><div class="l">전체 글</div></div>
+            <div class="astat"><div class="n"><?= $memberCount ?></div><div class="l">회원 수</div></div>
+            <div class="astat"><div class="n" id="adm-online">0</div><div class="l">접속 중</div></div>
+            <div class="astat"><div class="n" id="admin-notice">0</div><div class="l">공지사항</div></div>
+          </div>
+          <div style="padding:.7rem 1rem;display:flex;gap:.5rem;">
+            <button onclick="loadAdminUsers()" class="a-btn a-btn-primary">👥 회원 목록</button>
+            <button onclick="tryWrite()" class="a-btn" style="background:var(--success);color:#fff;">📝 공지 작성</button>
+            <button onclick="openPopupAdmin()" class="a-btn" style="background:#f97316;color:#fff;">📢 팝업 설정</button>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="admin-table">
+              <thead><tr><th>아이디</th><th>닉네임</th><th>레벨</th><th>포인트</th><th>관리자</th><th>관리</th></tr></thead>
+              <tbody id="admin-user-table"><tr><td colspan="6" style="text-align:center;">버튼을 눌러 회원 목록을 불러오세요</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <div class="write-card" style="margin-top:.8rem;">
+          <div class="write-card-head">📢 팝업 관리 (여러 개 가능)</div>
+          <div id="popup-list" style="margin-bottom:1rem;"></div>
+          <div style="border-top:1px solid var(--bd); padding-top:1rem;">
+            <h4>➕ 새 팝업 추가</h4>
+            <input class="fi" id="popup-title" placeholder="팝업 제목">
+            <textarea class="fi" id="popup-content" rows="2" placeholder="팝업 내용 (HTML 가능)"></textarea>
+            <input class="fi" id="popup-link" placeholder="링크 URL (선택)">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:.5rem;">
+              <input class="fi" id="popup-width" placeholder="너비" value="400" style="width:100%">
+              <input class="fi" id="popup-height" placeholder="높이" value="300" style="width:100%">
+              <input class="fi" id="popup-top" placeholder="위치(Y)" value="100" style="width:100%">
+              <input class="fi" id="popup-left" placeholder="위치(X)" value="100" style="width:100%">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:.5rem;">
+              <input class="fi" id="popup-duration" placeholder="지속시간(초)" value="86400" style="width:100%">
+              <input class="fi" id="popup-order" placeholder="표시순서" value="0" style="width:100%">
+            </div>
+            <button onclick="saveNewPopup()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--rad);padding:.5rem 1.2rem;cursor:pointer;">💾 팝업 저장</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="right-sb">
+      <div class="sb-card">
+        <div class="sb-card-head">👤 내 정보</div>
+        <div class="sb-card-body" id="right-myinfo">
+          <?php if($currentUser): ?>
+          <div class="my-profile-card">
+            <div class="my-cover"></div>
+            <div class="my-av-wrap"><div class="my-av"><?= h(mb_substr($currentUser['nick'],0,1)) ?></div></div>
+            <div class="my-nick"><?= h($currentUser['nick']) ?></div>
+            <div><?= lvBadge($currentUser['lv']) ?></div>
+            <div class="my-stats">
+              <div class="my-stat"><div class="n"><?= $currentUser['lv'] ?></div><div class="l">레벨</div></div>
+              <div class="my-stat"><div class="n"><?= number_format($currentUser['point']) ?></div><div class="l">포인트</div></div>
+              <div class="my-stat"><div class="n" id="my-post-cnt">0</div><div class="l">게시글</div></div>
+            </div>
+            <div class="my-btns">
+              <button class="my-btn mb-primary" onclick="goPage('profile')">프로필</button>
+              <button class="my-btn mb-danger" onclick="doLogout()">로그아웃</button>
+            </div>
+          </div>
+          <?php else: ?>
+          <div style="text-align:center;">
+            <p style="margin-bottom:.7rem;">로그인 후 이용하세요</p>
+            <button onclick="showModal('login')" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:5px;padding:.45rem;cursor:pointer;">로그인</button>
+          </div>
+          <?php endif; ?>
+        </div>
+      </div>
+
+      <div class="sb-card">
+        <div class="sb-card-head">🟢 접속자</div>
+        <div class="sb-card-body">
+          <div class="vis-count" id="vis-count">0명</div>
+          <div id="vis-list"></div>
+        </div>
+      </div>
+
+      <div class="sb-card">
+        <div class="sb-card-head">🆕 최신글</div>
+        <div class="sb-card-body" style="padding:.4rem .9rem;"><ul class="event-list" id="sb-new-list"></ul></div>
+      </div>
+
+      <div class="sb-card">
+        <div class="sb-card-head">💱 USD/KRW <span id="rate-time"></span></div>
+        <div class="sb-card-body">
+          <div class="rate-num" id="rate-main">--</div>
+          <div class="rate-chg" id="rate-chg">--</div>
+          <div class="rate-detail"><span>저 <span id="rate-lo">--</span></span><span>고 <span id="rate-hi">--</span></span></div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
 
-<!-- 로그인/회원가입 모달 -->
 <div id="auth-modal" class="modal-overlay">
   <div class="modal-box">
+    <button class="modal-close" onclick="closeModal()">✕</button>
     <h3>RANL AD</h3>
+    <div class="modal-tabs"><div class="modal-tab on" onclick="switchTab('login')">로그인</div><div class="modal-tab" onclick="switchTab('register')">회원가입</div></div>
     <div id="form-login">
       <input class="auth-input" id="login-id" placeholder="아이디">
       <input class="auth-input" id="login-pw" type="password" placeholder="비밀번호">
       <button class="auth-btn" onclick="doLogin()">로그인</button>
+      <div id="login-msg" class="auth-msg"></div>
     </div>
-    <div id="form-register" style="display:none;">
-      <input class="auth-input" id="reg-id" placeholder="아이디">
-      <input class="auth-input" id="reg-nick" placeholder="닉네임">
-      <input class="auth-input" id="reg-pw" type="password" placeholder="비밀번호">
+    <div id="form-register" style="display:none">
+      <input class="auth-input" id="reg-id" placeholder="아이디 (4~12자)">
+      <input class="auth-input" id="reg-nick" placeholder="닉네임 (2~10자)">
+      <input class="auth-input" id="reg-pw" type="password" placeholder="비밀번호 (6자 이상)">
+      <input class="auth-input" id="reg-pw2" type="password" placeholder="비밀번호 확인">
       <button class="auth-btn" onclick="doRegister()">회원가입</button>
-    </div>
-    <div style="text-align:center; margin-top:16px;">
-      <a href="#" onclick="switchTab('login')" style="color:#666;" id="tab-login-link">로그인</a> | 
-      <a href="#" onclick="switchTab('register')" style="color:#666;" id="tab-reg-link">회원가입</a>
+      <div id="reg-msg" class="auth-msg"></div>
     </div>
   </div>
 </div>
 
+<div id="multi-popup-container"></div>
+
+<div class="toast" id="toast"></div>
+<div class="theme-btn" id="theme-btn">🌙</div>
+
+<footer>© RANL AD 소셜 커뮤니티 | 갤러리, 게시판, 실시간 소통</footer>
+
 <script>
+document.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+document.addEventListener('keydown', function(e){
+  if(e.key === 'F12') { e.preventDefault(); }
+  if(e.ctrlKey && e.shiftKey && ['I','J','C'].includes(e.key)) { e.preventDefault(); }
+  if(e.ctrlKey && e.key === 'u') { e.preventDefault(); }
+});
+
 var csrfToken = '<?= $_SESSION['csrf_token'] ?>';
-var POSTS = <?= json_encode($dbPosts) ?>;
-var CU = <?= json_encode($currentUser) ?>;
-var curPage = 'home', curBoard = '자유게시판', curPostId = null;
 
-function h(s){ return String(s||'').replace(/[&<>]/g, m => m==='&'?'&amp;':m==='<'?'&lt;':'&gt;'); }
-function p(body){ return fetch('',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body+'&csrf_token='+csrfToken}).then(r=>r.json()); }
-function showToast(msg){ alert(msg); }
+function esc(s){return String(s||'').replace(/[&<>]/g,function(m){return m==='&'?'&amp;':m==='<'?'&lt;':'&gt;';});}
+function lvJS(lv){if(lv>=99)return'⚡관리자';if(lv>=30)return'🏆레전드';if(lv>=20)return'👑마스터';if(lv>=10)return'💎다이아';if(lv>=7)return'🥇골드';if(lv>=4)return'🥈실버';if(lv>=2)return'🥉브론즈';return'🌱뉴비';}
+function showToast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2500);}
+function p(body){return fetch(window.location.href,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body + '&csrf_token=' + encodeURIComponent(csrfToken)}).then(function(r){return r.json();});}
 
-function showModal(t){ document.getElementById('auth-modal').classList.add('show'); switchTab(t||'login'); }
-function closeModal(){ document.getElementById('auth-modal').classList.remove('show'); }
-function switchTab(t){
-  var isLogin = t==='login';
-  document.getElementById('form-login').style.display = isLogin?'block':'none';
-  document.getElementById('form-register').style.display = isLogin?'none':'block';
-}
-function doLogin(){
-  var id = document.getElementById('login-id').value;
-  var pw = document.getElementById('login-pw').value;
-  p('action=login&id='+encodeURIComponent(id)+'&pw='+encodeURIComponent(pw)).then(d=>{ if(d.success) location.reload(); else alert(d.error); });
-}
-function doRegister(){
-  var id = document.getElementById('reg-id').value;
-  var nick = document.getElementById('reg-nick').value;
-  var pw = document.getElementById('reg-pw').value;
-  p('action=register&id='+encodeURIComponent(id)+'&nick='+encodeURIComponent(nick)+'&pw='+encodeURIComponent(pw)).then(d=>{ if(d.success) { alert('가입 완료!'); switchTab('login'); } else alert(d.error); });
-}
-function doLogout(){ p('action=logout').then(()=>location.reload()); }
+var POSTS=<?= json_encode($dbPosts) ?>;
+var CU=<?= json_encode($currentUser) ?>;
+var curPage='home',curBoard='자유게시판',curPostId=null,prevPage='home',bPage=1,searchQ='',feedFilter='all';
 
-function renderHomePosts(){
-  var normalPosts = POSTS.filter(p => p.notice == 0).sort((a,b) => b.id - a.id).slice(0, 8);
-  var html = normalPosts.map(p => {
-    return '<tr onclick="goPage(\'post\','+p.id+')"><td>'+p.id+'</td><td><span class="post-title">'+h(p.title)+'</span></td><td>'+h(p.writer)+'</td><td>'+ (p.created_at||'').slice(5,10) +'</td><td>'+p.hit+'</td></tr>';
+// 갤러리 함수
+var galleryData = [];
+
+function loadGallery() {
+    p('action=get_gallery').then(function(d){
+        if(d.success && d.images){
+            galleryData = d.images;
+            var grid = document.getElementById('gallery-grid');
+            if(d.images.length === 0){
+                grid.innerHTML = '<div style="text-align:center;padding:2rem;">등록된 이미지가 없습니다. 첫 이미지를 업로드해보세요!</div>';
+                return;
+            }
+            grid.innerHTML = d.images.map(function(img){
+                var isAdmin = CU && (CU.isAdmin == 1 || CU.id === 'admin');
+                var liked = CU && img.liked_by && img.liked_by.includes(CU.id);
+                return '<div class="gallery-item">' +
+                    '<img class="gallery-image" src="' + esc(img.image) + '" onclick="openGalleryModal(\'' + esc(img.image) + '\')">' +
+                    '<div class="gallery-info">' +
+                    '<div class="gallery-title">' + esc(img.title) + '</div>' +
+                    '<div class="gallery-meta">' +
+                    '<span>📝 ' + esc(img.writer) + '</span>' +
+                    '<span>📅 ' + (img.created_at || '').slice(0,10) + '</span>' +
+                    '</div>' +
+                    '<div class="gallery-meta">' +
+                    '<div class="gallery-like" onclick="likeGalleryImage(\'' + img.id + '\', this)">' +
+                    (liked ? '❤️' : '🤍') + ' <span class="like-count">' + (img.likes || 0) + '</span>' +
+                    '</div>' +
+                    (isAdmin ? '<div class="gallery-like" onclick="deleteGalleryImage(\'' + img.id + '\')" style="color:var(--danger);">🗑️ 삭제</div>' : '') +
+                    '</div>' +
+                    '</div></div>';
+            }).join('');
+        }
+    });
+}
+
+function openUploadModal() {
+    var area = document.getElementById('upload-area');
+    if(area.style.display === 'none' || area.style.display === ''){
+        area.style.display = 'block';
+        document.getElementById('gallery-file').click();
+    } else {
+        area.style.display = 'none';
+    }
+}
+
+function previewAndUpload(input) {
+    var file = input.files[0];
+    if(!file) return;
+    
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        var preview = document.getElementById('image-preview');
+        preview.src = e.target.result;
+        preview.style.display = 'block';
+        
+        var title = prompt('이미지 제목을 입력하세요:', '');
+        if(!title){
+            showToast('제목을 입력해주세요');
+            document.getElementById('upload-area').style.display = 'none';
+            input.value = '';
+            return;
+        }
+        
+        p('action=upload_gallery&title=' + encodeURIComponent(title) + '&writer=' + encodeURIComponent(CU.nick) + '&image_data=' + encodeURIComponent(e.target.result))
+            .then(function(res){
+                if(res.success){
+                    showToast('업로드 완료!');
+                    loadGallery();
+                } else {
+                    showToast(res.error || '업로드 실패');
+                }
+                document.getElementById('upload-area').style.display = 'none';
+                preview.style.display = 'none';
+                input.value = '';
+            });
+    };
+    reader.readAsDataURL(file);
+}
+
+function openGalleryModal(src) {
+    var modal = document.getElementById('gallery-modal');
+    var img = document.getElementById('modal-image');
+    img.src = src;
+    modal.classList.add('show');
+}
+
+function closeGalleryModal() {
+    var modal = document.getElementById('gallery-modal');
+    modal.classList.remove('show');
+}
+
+function likeGalleryImage(imageId, el) {
+    if(!CU){
+        showToast('로그인이 필요합니다');
+        showModal('login');
+        return;
+    }
+    p('action=like_gallery&image_id=' + imageId).then(function(d){
+        if(d.success){
+            var likeSpan = el.querySelector('.like-count');
+            if(likeSpan) likeSpan.textContent = d.likes;
+            var heart = el.innerHTML.includes('❤️') ? '🤍' : '❤️';
+            el.innerHTML = heart + ' <span class="like-count">' + d.likes + '</span>';
+            showToast('추천했습니다!');
+        } else {
+            showToast(d.error || '오류가 발생했습니다');
+        }
+    });
+}
+
+function deleteGalleryImage(imageId) {
+    if(!confirm('이 이미지를 삭제하시겠습니까?')) return;
+    p('action=delete_gallery&image_id=' + imageId).then(function(d){
+        if(d.success){
+            showToast('삭제 완료');
+            loadGallery();
+        } else {
+            showToast(d.error || '삭제 실패');
+        }
+    });
+}
+
+// 팝업 함수
+var shownPopups = JSON.parse(localStorage.getItem('shown_popups') || '{}');
+
+function loadPopups() {
+    p('action=get_popups').then(function(d){
+        if(d.success && d.popups && d.popups.length){
+            var container = document.getElementById('multi-popup-container');
+            if(!container) return;
+            container.innerHTML = '';
+            d.popups.forEach(function(popup){
+                var expire = (popup.created_at || 0) + (popup.duration || 86400);
+                var hideKey = 'popup_' + popup.id;
+                if(shownPopups[hideKey] && shownPopups[hideKey] > Date.now()) return;
+                
+                var popupDiv = document.createElement('div');
+                popupDiv.className = 'custom-popup';
+                popupDiv.style.cssText = 'position:fixed; z-index:10000; background:var(--surface); border:2px solid var(--accent); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.2); width:'+popup.width+'px; top:'+popup.top+'px; left:'+popup.left+'px;';
+                var contentHtml = popup.link ? '<a href="'+esc(popup.link)+'" target="_blank" style="display:block; text-decoration:none; color:inherit;">'+popup.content+'</a>' : popup.content;
+                popupDiv.innerHTML = '<div style="padding:0.5rem 1rem; background:var(--accent); color:#fff; font-weight:700; display:flex; justify-content:space-between; align-items:center; border-radius:10px 10px 0 0;"><span>'+esc(popup.title)+'</span><button onclick="closePopupById(\''+popup.id+'\')" style="background:none; border:none; color:#fff; font-size:1.2rem; cursor:pointer;">&times;</button></div><div style="padding:1rem;">'+contentHtml+'</div><div style="padding:0.5rem 1rem; border-top:1px solid var(--bd); text-align:center;"><button onclick="closePopupTodayById(\''+popup.id+'\')" style="background:var(--surface2); border:1px solid var(--bd); border-radius:5px; padding:0.2rem 0.8rem; font-size:0.7rem; cursor:pointer;">24시간 보지 않기</button></div>';
+                container.appendChild(popupDiv);
+            });
+        }
+    });
+}
+
+function closePopupById(popupId) {
+    var popups = document.querySelectorAll('.custom-popup');
+    popups.forEach(function(p){
+        p.remove();
+    });
+}
+
+function closePopupTodayById(popupId) {
+    var hideKey = 'popup_' + popupId;
+    shownPopups[hideKey] = Date.now() + 86400000;
+    localStorage.setItem('shown_popups', JSON.stringify(shownPopups));
+    closePopupById(popupId);
+    showToast('24시간 동안 이 팝업을 표시하지 않습니다.');
+}
+
+function loadPopupList() {
+    if(!CU || (CU.isAdmin != 1 && CU.id != 'admin')) return;
+    p('action=get_popups').then(function(d){
+        if(d.success && d.popups){
+            var listHtml = '<h4>📋 현재 팝업 목록</h4><div style="max-height:300px; overflow-y:auto;">';
+            d.popups.forEach(function(pop){
+                listHtml += '<div style="border:1px solid var(--bd); padding:.5rem; margin-bottom:.5rem; border-radius:8px;">';
+                listHtml += '<strong>'+esc(pop.title)+'</strong> <span style="color:var(--text3);">(순서:'+pop.order+')</span>';
+                listHtml += '<div style="font-size:.7rem; color:var(--text3);">크기:'+pop.width+'x'+pop.height+' 위치:'+pop.left+','+pop.top+'</div>';
+                listHtml += '<button onclick="deletePopup(\''+pop.id+'\')" class="a-btn a-btn-danger" style="margin-top:.3rem;">삭제</button>';
+                listHtml += '</div>';
+            });
+            listHtml += '</div>';
+            if(d.popups.length === 0) listHtml += '<div style="text-align:center; padding:1rem;">등록된 팝업이 없습니다.</div>';
+            document.getElementById('popup-list').innerHTML = listHtml;
+        }
+    });
+}
+
+function saveNewPopup() {
+    var title = document.getElementById('popup-title').value;
+    var content = document.getElementById('popup-content').value;
+    var link = document.getElementById('popup-link').value;
+    var width = document.getElementById('popup-width').value;
+    var height = document.getElementById('popup-height').value;
+    var top = document.getElementById('popup-top').value;
+    var left = document.getElementById('popup-left').value;
+    var duration = document.getElementById('popup-duration').value;
+    var order = document.getElementById('popup-order').value;
+    if(!title || !content){ showToast('제목과 내용을 입력하세요'); return; }
+    p('action=save_popup&popup_title='+encodeURIComponent(title)+'&popup_content='+encodeURIComponent(content)+'&popup_link='+encodeURIComponent(link)+'&popup_width='+width+'&popup_height='+height+'&popup_top='+top+'&popup_left='+left+'&popup_duration='+duration+'&popup_order='+order).then(function(d){
+        if(d.success){
+            showToast('팝업 저장 완료');
+            document.getElementById('popup-title').value = '';
+            document.getElementById('popup-content').value = '';
+            document.getElementById('popup-link').value = '';
+            loadPopupList();
+        }
+    });
+}
+
+function deletePopup(popupId) {
+    if(!confirm('이 팝업을 삭제하시겠습니까?')) return;
+    p('action=delete_popup&popup_id='+popupId).then(function(d){
+        if(d.success){
+            showToast('팝업 삭제 완료');
+            loadPopupList();
+        }
+    });
+}
+
+function openPopupAdmin(){
+    loadPopupList();
+}
+
+// 기존 함수들
+function showModal(t){document.getElementById('auth-modal').classList.add('show');switchTab(t||'login');}
+function closeModal(){document.getElementById('auth-modal').classList.remove('show');}
+function switchTab(t){var isLogin=t==='login';document.querySelectorAll('.modal-tab').forEach(function(el,i){el.classList.toggle('on',(i===0&&isLogin)||(i===1&&!isLogin));});document.getElementById('form-login').style.display=isLogin?'block':'none';document.getElementById('form-register').style.display=isLogin?'none':'block';}
+function doLogin(){var id=document.getElementById('login-id').value.trim(),pw=document.getElementById('login-pw').value;if(!id||!pw){document.getElementById('login-msg').textContent='아이디와 비밀번호를 입력하세요';return;}p('action=login&id='+encodeURIComponent(id)+'&pw='+encodeURIComponent(pw)).then(function(d){if(d.success)location.reload();else document.getElementById('login-msg').textContent=d.error;});}
+function doRegister(){var id=document.getElementById('reg-id').value.trim(),nick=document.getElementById('reg-nick').value.trim(),pw=document.getElementById('reg-pw').value,pw2=document.getElementById('reg-pw2').value,msg=document.getElementById('reg-msg');if(!id||!nick||!pw){msg.textContent='모든 항목을 입력하세요';return;}if(id.length<4||id.length>12){msg.textContent='아이디는 4~12자';return;}if(nick.length<2||nick.length>10){msg.textContent='닉네임은 2~10자';return;}if(pw.length<6){msg.textContent='비밀번호는 6자 이상';return;}if(pw!==pw2){msg.textContent='비밀번호가 일치하지 않습니다';return;}p('action=register&id='+encodeURIComponent(id)+'&nick='+encodeURIComponent(nick)+'&pw='+encodeURIComponent(pw)).then(function(d){if(d.success){msg.className='auth-msg ok';msg.textContent='가입 완료! 로그인해주세요';setTimeout(function(){switchTab('login');},1000);}else msg.textContent=d.error;});}
+function doLogout(){p('action=logout').then(function(){location.reload();});}
+
+function updateOnline(){var b=CU?'action=update_online&user_id='+encodeURIComponent(CU.id)+'&nick='+encodeURIComponent(CU.nick):'action=get_online';p(b).then(function(d){if(!d.success)return;var u=d.users||[],n=u.length;document.getElementById('tb-online').textContent=n;document.getElementById('ls-online').textContent=n;document.getElementById('adm-online').textContent=n;document.getElementById('vis-count').textContent=n+'명';var vl=document.getElementById('vis-list');if(vl){vl.innerHTML=n===0?'<div style="font-size:.72rem;">접속자 없음</div>':u.map(function(x){return'<div class="vis-item"><div class="vis-dot"></div><span>'+esc(x.nick)+'</span></div>';}).join('');}});}
+setInterval(updateOnline,8000);updateOnline();
+
+function makeRows(posts){
+  if(!posts || !posts.length) return '<div class="empty-row">게시글이 없습니다.</div>';
+  return posts.map(function(post){
+    var isNew = (new Date() - new Date(post.created_at)) < 86400000;
+    var isHot = (post.like_count || 0) >= 10;
+    var num = post.notice == 1 ? '<span class="bdg bdg-notice">공지</span>' : post.id;
+    var gameTag = post.game ? ' <span class="bgame">🎮'+esc(post.game)+'</span>' : '';
+    var catTag = post.notice == 1 ? '' : '<span class="bcat">['+esc(post.category||'자유')+']</span>';
+    return '<div class="board-row" onclick="openPost('+post.id+')"><div class="b-num">'+num+'</div><div class="b-title">'+catTag+esc(post.title)+gameTag+(isNew?'<span class="bdg bdg-new">N</span>':'')+(isHot?'<span class="bdg bdg-hot">HOT</span>':'')+'</div><div class="b-author">'+esc(post.writer)+'</div><div class="b-date">'+(post.created_at||'').slice(5,10)+'</div><div class="b-hit">'+(post.hit||0)+'</div><div class="b-like">'+(post.like_count||0)+'</div></div>';
   }).join('');
-  document.getElementById('home-post-list').innerHTML = html || '<tr><td colspan="5">게시글이 없습니다.</td></tr>';
 }
 
-function renderBoard(){
-  var filtered = POSTS.filter(p => p.category === curBoard);
-  var html = filtered.sort((a,b) => b.id - a.id).map(p => {
-    return '<tr onclick="goPage(\'post\','+p.id+')"><td>'+ (p.notice==1?'<span class="badge-notice">공지</span>':p.id) +'</td><td><span class="post-title">'+h(p.title)+'</span></td><td>'+h(p.writer)+'</td><td>'+ (p.created_at||'').slice(5,10) +'</td><td>'+p.hit+'</td></tr>';
+function renderHome(){
+  var uniqueMap = {};
+  var cleanPosts = [];
+  for(var i = 0; i < POSTS.length; i++){
+    if(!uniqueMap[POSTS[i].id]){
+      uniqueMap[POSTS[i].id] = true;
+      cleanPosts.push(POSTS[i]);
+    }
+  }
+  POSTS = cleanPosts;
+  
+  var normalPosts = POSTS.filter(function(x){ return x.notice == 0; });
+  var noticePosts = POSTS.filter(function(x){ return x.notice == 1; });
+  var hotPosts = normalPosts.slice().sort(function(a,b){ return (b.like_count||0) - (a.like_count||0); }).slice(0,5);
+  var newPosts = normalPosts.slice().sort(function(a,b){ return b.id - a.id; }).slice(0,8);
+  
+  document.getElementById('home-notice-rows').innerHTML = makeRows(noticePosts);
+  document.getElementById('home-hot-rows').innerHTML = makeRows(hotPosts);
+  document.getElementById('home-new-rows').innerHTML = makeRows(newPosts);
+  document.getElementById('stat-posts').textContent = normalPosts.length;
+  if(document.getElementById('admin-posts')) {
+    document.getElementById('admin-posts').textContent = POSTS.length;
+    document.getElementById('admin-notice').textContent = noticePosts.length;
+  }
+  if(CU){
+    var myPosts = POSTS.filter(function(x){ return x.writer === CU.nick; });
+    var myCnt = document.getElementById('my-post-cnt');
+    if(myCnt) myCnt.textContent = myPosts.length;
+  }
+}
+
+function setFeedFilter(filter,el){feedFilter=filter;document.querySelectorAll('.feed-tab').forEach(function(t){t.classList.remove('on');});el.classList.add('on');renderFeed();}
+
+function renderFeed(){
+  var posts = feedFilter === 'all' ? 
+    POSTS.filter(function(x){ return x.notice == 0; }) : 
+    POSTS.filter(function(x){ return x.notice == 0 && x.category === feedFilter; });
+  
+  var uniqueMap = {};
+  var uniquePosts = [];
+  for(var i = 0; i < posts.length; i++){
+    var pid = posts[i].id;
+    if(!uniqueMap[pid]){
+      uniqueMap[pid] = true;
+      uniquePosts.push(posts[i]);
+    }
+  }
+  
+  var sorted = uniquePosts.sort(function(a,b){ return b.id - a.id; }).slice(0,15);
+  var c = document.getElementById('activity-feed');
+  if(!sorted.length){
+    c.innerHTML = '<div style="text-align:center;padding:2rem;">게시글이 없습니다.</div>';
+    return;
+  }
+  c.innerHTML = sorted.map(function(post){
+    var cmts = Array.isArray(post.comments) ? post.comments : [];
+    var isAdmin = CU && (CU.isAdmin == 1 || CU.id === 'admin');
+    var gameTag = post.game ? '<span class="ai-game">🎮'+esc(post.game)+'</span>' : '';
+    return '<div class="activity-item"><div class="ai-header"><div class="ai-avatar">'+esc(post.writer[0])+'</div><div class="ai-meta"><div class="ai-nick">'+esc(post.writer)+' '+lvJS(post.authorLv||1)+'<span class="ai-cat">'+esc(post.category||'자유')+'</span>'+gameTag+'</div><div class="ai-time">'+(post.created_at||'').slice(0,16)+' · 조회 '+post.hit+'</div></div></div><div class="ai-body"><strong>'+esc(post.title)+'</strong><br>'+esc(post.content||'').replace(/\n/g,'<br>').slice(0,200)+(post.content&&post.content.length>200?'...<a href="#" onclick="openPost('+post.id+');return false;" style="color:var(--accent);"> 더 보기</a>':'')+'</div><div class="ai-actions"><button class="ai-btn" onclick="likePost('+post.id+',\'like\')">👍 추천 '+(post.like_count||0)+'</button><button class="ai-btn" onclick="openPost('+post.id+')">💬 댓글 '+cmts.length+'</button>'+(isAdmin?'<button class="ai-btn del" onclick="delPost('+post.id+')">삭제</button>':'')+'</div>'+(cmts.length?'<div class="comments-area">'+cmts.slice(-2).map(function(c){return'<div class="cmt-item"><div class="cmt-av">'+esc(c.nick[0])+'</div><div class="cmt-content"><span class="cmt-nick">'+esc(c.nick)+'</span><span class="cmt-date">'+esc(c.date||'')+'</span><div class="cmt-body">'+esc(c.body)+'</div></div></div>';}).join('')+'</div>':'')+(CU?'<div class="cmt-write"><input type="text" placeholder="댓글..." onkeydown="if(event.key===\'Enter\')quickCmt('+post.id+',this)"><button onclick="quickCmt('+post.id+',this.previousElementSibling)">등록</button></div>':'')+'</div>';
   }).join('');
-  document.getElementById('board-rows').innerHTML = html || '<tr><td colspan="5">게시글이 없습니다.</td></tr>';
-  document.getElementById('board-title').textContent = curBoard;
 }
 
-function openPost(id){
-  var post = POSTS.find(p => p.id == id);
-  if(!post) return;
-  p('action=hit&post_id='+id);
-  post.hit = (post.hit||0) + 1;
-  curPostId = id;
-  var cmts = Array.isArray(post.comments) ? post.comments : [];
-  document.getElementById('post-detail-content').innerHTML = '<h2>'+h(post.title)+'</h2><div style="margin:20px 0; color:#888;">'+h(post.writer)+' · '+post.created_at+' · 조회 '+post.hit+' · 추천 '+(post.like_count||0)+'</div><div>'+h(post.content).replace(/\n/g,'<br>')+'</div><button class="btn-primary" style="margin-top:20px;" onclick="likePost('+id+')">👍 추천</button>';
-  document.getElementById('cmt-cnt').textContent = cmts.length;
-  document.getElementById('cmt-list').innerHTML = cmts.map(c => '<div style="padding:12px 0; border-bottom:1px solid #333;"><strong>'+h(c.nick)+'</strong> <span style="color:#666;">'+c.date+'</span><div>'+h(c.body)+'</div></div>').join('');
-  goPage('post');
+function quickCmt(postId,inp){if(!CU){showToast('로그인이 필요합니다');return;}var body=inp.value.trim();if(!body)return;p('action=write_comment&post_id='+postId+'&nick='+encodeURIComponent(CU.nick)+'&body='+encodeURIComponent(body)).then(function(d){if(d.success){showToast('댓글 등록!');inp.value='';location.reload();}});}
+
+function renderBoard(pg){pg=pg||1;bPage=pg;var t=curBoard;document.getElementById('board-title').textContent=t;var filtered=POSTS.filter(function(x){return x.category===t;});if(searchQ)filtered=filtered.filter(function(x){return x.title.includes(searchQ)||(x.content||'').includes(searchQ);});var perPage=20,total=filtered.length,pages=Math.max(1,Math.ceil(total/perPage));document.getElementById('board-rows').innerHTML=makeRows(filtered.slice((pg-1)*perPage,pg*perPage));var pg_el=document.getElementById('board-paging');pg_el.innerHTML='';var s=Math.max(1,pg-4),e=Math.min(pages,pg+4);if(pg>1){var b1=document.createElement('button');b1.textContent='‹';b1.onclick=function(){renderBoard(pg-1);};pg_el.appendChild(b1);}for(var i=s;i<=e;i++){var btn=document.createElement('button');btn.textContent=i;if(i===pg)btn.classList.add('on');btn.onclick=(function(_i){return function(){renderBoard(_i);};})(i);pg_el.appendChild(btn);}if(pg<pages){var b2=document.createElement('button');b2.textContent='›';b2.onclick=function(){renderBoard(pg+1);};pg_el.appendChild(b2);}}
+function doSearch(){
+  searchQ = document.getElementById('search-input').value.trim();
+  if(searchQ && searchQ.length >= 2){
+    p('action=save_search&keyword=' + encodeURIComponent(searchQ));
+  }
+  renderBoard(1);
 }
 
-function likePost(id){
-  if(!CU) { showModal('login'); return; }
-  p('action=like&post_id='+id+'&user_id='+CU.id+'&type=like').then(d=>{ if(d.success) location.reload(); });
-}
+function openPost(id){var post=POSTS.find(function(x){return x.id==id;});if(!post)return;p('action=hit&post_id='+id);post.hit=(post.hit||0)+1;curPostId=id;prevPage=curPage;document.querySelectorAll('.page').forEach(function(x){x.classList.remove('active');});document.getElementById('page-post').classList.add('active');curPage='post';window.scrollTo(0,0);var isAdmin=CU&&(CU.isAdmin==1||CU.id==='admin');var gameTag=post.game?'<div class="detail-game" style="margin-bottom:.5rem;"><span class="bdg bdg-game" style="background:var(--accent2);">🎮 '+esc(post.game)+'</span></div>':'';document.getElementById('post-detail-content').innerHTML='<div class="detail-title">'+(post.notice==1?'<span class="bdg bdg-notice">공지</span> ':'')+'<span style="color:var(--accent);">['+esc(post.category||'자유')+']</span> '+esc(post.title)+'</div>'+gameTag+'<div class="detail-meta"><span>'+lvJS(post.authorLv||1)+' '+esc(post.writer)+'</span><span>📅 '+(post.created_at||'').slice(0,16)+'</span><span>👁 '+post.hit+'</span><span>❤️ '+(post.like_count||0)+'</span></div><div class="detail-body">'+esc(post.content||'').replace(/\n/g,'<br>')+'</div><div class="detail-foot"><button class="ai-btn" onclick="likePost('+id+',\'like\')">👍 추천 <strong>'+(post.like_count||0)+'</strong></button>'+(isAdmin?'<button class="ai-btn del" onclick="delPost('+id+')" style="margin-left:auto;">삭제</button>':'')+'</div>';var cmts=Array.isArray(post.comments)?post.comments:[];document.getElementById('cmt-cnt').textContent=cmts.length;document.getElementById('cmt-list').innerHTML=cmts.length===0?'<div style="text-align:center;padding:1rem;">첫 댓글을 작성해보세요!</div>':cmts.map(function(c){return'<div class="cmt-item"><div class="cmt-av">'+esc(c.nick[0])+'</div><div class="cmt-content"><span class="cmt-nick">'+esc(c.nick)+'</span><span class="cmt-date">'+esc(c.date||'')+'</span><div class="cmt-body">'+esc(c.body)+'</div></div></div>';}).join('');updateSidebar();}
+function likePost(id,type){if(!CU){showToast('로그인이 필요합니다');showModal('login');return;}p('action=like&post_id='+id+'&user_id='+CU.id+'&type='+type).then(function(d){if(d.success)location.reload();});}
+function delPost(id){if(!confirm('정말 삭제하시겠습니까?'))return;p('action=delete_post&id='+id).then(function(){showToast('삭제 완료');location.reload();});}
+function submitComment(){if(!CU){showToast('로그인이 필요합니다');return;}var body=document.getElementById('cmt-input').value.trim();if(!body){showToast('내용을 입력하세요');return;}p('action=write_comment&post_id='+curPostId+'&nick='+encodeURIComponent(CU.nick)+'&body='+encodeURIComponent(body)).then(function(d){if(d.success){showToast('댓글 등록!');location.reload();}});}
 
-function submitComment(){
-  if(!CU) { showModal('login'); return; }
-  var body = document.getElementById('cmt-input').value;
-  p('action=write_comment&post_id='+curPostId+'&nick='+encodeURIComponent(CU.nick)+'&body='+encodeURIComponent(body)).then(d=>{ if(d.success) location.reload(); });
-}
+function tryWrite(){if(!CU){showToast('로그인이 필요합니다');showModal('login');return;}var isAdmin=CU&&(CU.isAdmin==1||CU.id==='admin');document.getElementById('notice-chk-wrap').style.display=isAdmin?'block':'none';goPage('write');}
+var isWriting = false;
 
 function submitPost(){
-  if(!CU) return;
-  var title = document.getElementById('write-title').value;
-  var body = document.getElementById('write-body').value;
-  var cat = document.getElementById('write-cat').value;
-  p('action=write_post&title='+encodeURIComponent(title)+'&content='+encodeURIComponent(body)+'&writer='+encodeURIComponent(CU.nick)+'&category='+encodeURIComponent(cat)+'&game=&is_notice=0').then(d=>{ if(d.success) { alert('등록 완료!'); location.reload(); } });
+  if(!CU){showToast('로그인 필요');return;}
+  if(isWriting){showToast('이미 처리 중입니다. 잠시만 기다려주세요.');return;}
+  var title=document.getElementById('write-title').value.trim();
+  var body=document.getElementById('write-body').value.trim();
+  var cat=document.getElementById('write-cat').value;
+  var game=document.getElementById('write-game').value;
+  var isNotice=document.getElementById('write-notice')?.checked?1:0;
+  if(!title||!body){showToast('제목과 내용을 입력하세요');return;}
+  isWriting = true;
+  p('action=write_post&title='+encodeURIComponent(title)+'&content='+encodeURIComponent(body)+'&writer='+encodeURIComponent(CU.nick)+'&category='+encodeURIComponent(cat)+'&game='+encodeURIComponent(game)+'&is_notice='+isNotice).then(function(d){
+    isWriting = false;
+    if(d.success){showToast('등록 완료!');location.reload();}
+    else showToast('등록 실패');
+  }).catch(function(){isWriting = false;});
 }
 
-// 갤러리
-function loadGallery(){
-  p('action=get_gallery').then(d=>{
-    if(d.success){
-      var grid = document.getElementById('gallery-grid');
-      grid.innerHTML = d.images.map(img => '<div><img src="'+img.image+'" style="width:100%; border-radius:8px;"><div>'+h(img.title)+'</div></div>').join('');
-    }
-  });
-}
-function openUploadModal(){ document.getElementById('gallery-file')?.click(); }
+function renderProfile(){if(!CU){goPage('home');return;}var mp=POSTS.filter(function(x){return x.writer===CU.nick;});document.getElementById('profile-box').innerHTML='<div class="detail-card" style="text-align:center;"><div style="width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:700;margin:0 auto .6rem;">'+esc(CU.nick[0])+'</div><div style="font-weight:700;">'+esc(CU.nick)+'</div><div>'+lvJS(CU.lv)+'</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;max-width:260px;margin:.8rem auto 0;"><div class="my-stat"><div class="n">'+CU.lv+'</div><div class="l">레벨</div></div><div class="my-stat"><div class="n">'+CU.point+'</div><div class="l">포인트</div></div><div class="my-stat"><div class="n">'+mp.length+'</div><div class="l">게시글</div></div></div></div>';document.getElementById('my-post-rows').innerHTML=makeRows(mp);}
 
-function goPage(page, param){
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  if(page === 'home') { document.getElementById('page-home').classList.add('active'); renderHomePosts(); }
-  if(page === 'board') { document.getElementById('page-board').classList.add('active'); curBoard = param || '자유게시판'; renderBoard(); }
-  if(page === 'write') { document.getElementById('page-write').classList.add('active'); }
-  if(page === 'post') { document.getElementById('page-post').classList.add('active'); }
-  if(page === 'gallery') { document.getElementById('page-gallery').classList.add('active'); loadGallery(); }
-  curPage = page;
-}
+var allUsers=[],currentUserPage=1;function loadAdminUsers(page){page=page||1;currentUserPage=page;if(allUsers.length===0){p('action=get_users').then(function(d){if(!d.success){showToast('권한 없음');return;}allUsers=d.users||[];renderUserPage(page);});}else{renderUserPage(page);}}function renderUserPage(page){var perPage=20,start=(page-1)*perPage,end=start+perPage,pageUsers=allUsers.slice(start,end),totalPages=Math.ceil(allUsers.length/perPage),html=pageUsers.map(function(u){return'<tr><td>'+esc(u.id)+'</td><td>'+esc(u.nick)+'</td><td>'+u.lv+'</td><td>'+u.point+'P</td><td>'+(u.isAdmin==1?'관리자':'일반')+'</td><td><button class="a-btn a-btn-primary" onclick="setLv(\''+esc(u.id)+'\',prompt(\'레벨 설정:\','+u.lv+'))">레벨</button> '+(u.isAdmin!=1?'<button class="a-btn a-btn-danger" onclick="delUser(\''+esc(u.id)+'\')">삭제</button>':'')+'</td></tr>';}).join(''),paginationHtml='';if(totalPages>1){paginationHtml='<div style="margin-top:1rem;text-align:center;display:flex;justify-content:center;gap:0.5rem;">';if(page>1)paginationHtml+='<button class="a-btn a-btn-primary" onclick="loadAdminUsers('+(page-1)+')">◀ 이전</button>';paginationHtml+='<span style="padding:0.3rem 0.8rem;background:var(--surface2);border-radius:5px;">'+page+' / '+totalPages+'</span>';if(page<totalPages)paginationHtml+='<button class="a-btn a-btn-primary" onclick="loadAdminUsers('+(page+1)+')">다음 ▶</button>';paginationHtml+='</div>';}document.getElementById('admin-user-table').innerHTML=html;var existingPaging=document.getElementById('admin-user-paging');if(existingPaging){existingPaging.innerHTML=paginationHtml;}else{var table=document.querySelector('.admin-table');if(table&&table.parentNode){var pagingDiv=document.createElement('div');pagingDiv.id='admin-user-paging';pagingDiv.innerHTML=paginationHtml;table.parentNode.insertBefore(pagingDiv,table.nextSibling);}}}
+function setLv(uid,lv){if(!lv||isNaN(parseInt(lv)))return;p('action=set_level&target_id='+encodeURIComponent(uid)+'&lv='+parseInt(lv)).then(function(d){if(d.success){showToast('레벨 변경 완료');allUsers=[];loadAdminUsers(currentUserPage);}});}
+function delUser(uid){if(!confirm(uid+'님을 탈퇴 처리할까요?'))return;p('action=delete_user&target_id='+encodeURIComponent(uid)).then(function(d){if(d.success){showToast('삭제 완료');allUsers=[];loadAdminUsers(currentUserPage);}});}
 
-// 접속자 업데이트
-function updateOnline(){
-  var b = CU ? 'action=update_online&user_id='+CU.id+'&nick='+encodeURIComponent(CU.nick) : 'action=get_online';
-  p(b).then(d=>{ if(d.success) document.getElementById('online-count').textContent = d.count; });
-}
-setInterval(updateOnline, 8000); updateOnline();
+function checkPopup(){ loadPopups(); }
+function closePopup(){}
+function closePopupToday(){}
 
-renderHomePosts();
+var rateHist=[],prevRate=0;
+function fetchRate(){
+  fetch('https://api.exchangerate-api.com/v4/latest/USD')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d && d.rates && d.rates.KRW){
+        var r = Math.round(d.rates.KRW);
+        rateHist.push(r);
+        if(rateHist.length > 30) rateHist.shift();
+        var lo = Math.min.apply(null, rateHist);
+        var hi = Math.max.apply(null, rateHist);
+        var diff = r - prevRate;
+        document.getElementById('rate-main').textContent = r.toLocaleString() + '원';
+        var rc = document.getElementById('rate-chg');
+        if(prevRate && diff !== 0){
+          rc.textContent = (diff > 0 ? '▲' : '▼') + Math.abs(diff) + '원';
+          rc.style.color = diff > 0 ? '#ef4444' : '#22c55e';
+        } else {
+          rc.textContent = '변동없음';
+          rc.style.color = 'var(--text3)';
+        }
+        document.getElementById('rate-lo').textContent = lo.toLocaleString();
+        document.getElementById('rate-hi').textContent = hi.toLocaleString();
+        document.getElementById('rate-time').textContent = new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
+        prevRate = r;
+      }
+    })
+    .catch(function(){ 
+      document.getElementById('rate-main').textContent = '1,450원';
+    });
+}
+setInterval(fetchRate, 30000);
+fetchRate();
+
+function updateSidebar(){var el=document.getElementById('sb-new-list');if(!el)return;el.innerHTML=POSTS.filter(function(x){return x.notice==0;}).slice(0,8).map(function(post){return'<li><a href="#" onclick="openPost('+post.id+');return false;"><span class="ev-tag">'+esc(post.category||'자유')+'</span>'+(post.game?'<span class="ev-tag" style="background:var(--accent2);">🎮'+esc(post.game)+'</span>':'')+'<span style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1;">'+esc(post.title)+'</span></a></li>';}).join('');}
+
+var navMap={'home':'nav-home','activity':'nav-act','gallery':'nav-gallery','자유게시판':'nav-free','공략게시판':'nav-tip','유머게시판':'nav-fun','질문게시판':'nav-qna','종합게임':'nav-game'};
+var smMap={'home':'sm-home','activity':'sm-act','gallery':'sm-gallery','자유게시판':'sm-free','공략게시판':'sm-tip','유머게시판':'sm-fun','질문게시판':'sm-qna','종합게임':'sm-game','profile':'sm-my','admin':'sm-admin'};
+function goPage(page,board){
+  document.querySelectorAll('.page').forEach(function(x){x.classList.remove('active');});
+  document.getElementById('page-'+page).classList.add('active');
+  document.querySelectorAll('.main-nav a').forEach(function(x){x.classList.remove('on');});
+  document.querySelectorAll('.side-menu a').forEach(function(x){x.classList.remove('on');});
+  var nk=navMap[board||page];
+  if(nk){var nel=document.getElementById(nk);if(nel)nel.classList.add('on');}
+  var sk=smMap[board||page];
+  if(sk){var sel=document.getElementById(sk);if(sel)sel.classList.add('on');}
+  prevPage=curPage;curPage=page;
+  if(board)curBoard=board;
+  if(page==='home')renderHome();
+  if(page==='activity')renderFeed();
+  if(page==='board')renderBoard();
+  if(page==='profile')renderProfile();
+  if(page==='gallery')loadGallery();
+  if(page==='admin'){allUsers=[]; loadAdminUsers(1); loadPopupList();}
+  window.scrollTo(0,0);
+  updateSidebar();
+}
+function goBack(){goPage(prevPage||'board');}
+
+function tick(){var n=new Date();var cl=document.getElementById('tb-clock');if(cl)cl.textContent=n.toLocaleTimeString('ko-KR',{hour12:false});var dt=document.getElementById('tb-date');if(dt)dt.textContent=n.toLocaleDateString('ko-KR');}
+setInterval(tick,1000);tick();
+
+var thBtn=document.getElementById('theme-btn');var st=localStorage.getItem('ranl_theme')||'light';document.body.className=st;thBtn.textContent=st==='dark'?'☀️':'🌙';thBtn.onclick=function(){var t=document.body.classList.contains('light')?'dark':'light';document.body.className=t;localStorage.setItem('ranl_theme',t);thBtn.textContent=t==='dark'?'☀️':'🌙';};
+
+document.getElementById('auth-modal').addEventListener('click',function(e){if(e.target===this)closeModal();});
+
+renderHome();
+renderFeed();
+updateSidebar();
+checkPopup();
 </script>
 </body>
 </html>
