@@ -1,413 +1,1210 @@
+<?php
+error_reporting(0);
+ini_set('display_errors', 0);
+session_start();
+require __DIR__ . '/db.php';
+
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+if (!isset($_SESSION['login_attempts'])) {
+    $_SESSION['login_attempts'] = 0;
+    $_SESSION['last_attempt_time'] = time();
+}
+
+// ── AJAX 처리 ──
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+    header('Content-Type: application/json');
+
+    if (!in_array($action, ['login', 'register']) && (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token'])) {
+        echo json_encode(['success' => false, 'error' => '보안 토큰이 유효하지 않습니다.']);
+        exit;
+    }
+
+    if ($action === 'login') {
+        if ($_SESSION['login_attempts'] >= 5 && (time() - $_SESSION['last_attempt_time']) < 300) {
+            echo json_encode(['success' => false, 'error' => '너무 많은 로그인 시도입니다. 5분 후 다시 시도하세요.']);
+            exit;
+        }
+        $id = trim($_POST['id'] ?? ''); 
+        $pw = trim($_POST['pw'] ?? '');
+        $stmt = $mysqli->prepare("SELECT * FROM users WHERE id = ?");
+        $stmt->bind_param("s", $id);
+        $stmt->execute();
+        $user = $stmt->get_result()->fetch_assoc();
+        if ($user && password_verify($pw, $user['pw'])) { 
+            $_SESSION['login_attempts'] = 0;
+            session_regenerate_id(true);
+            unset($user['pw']);
+            $_SESSION['user'] = $user; 
+            echo json_encode(['success' => true, 'user' => $user]); 
+        } else { 
+            $_SESSION['login_attempts']++;
+            $_SESSION['last_attempt_time'] = time();
+            echo json_encode(['success' => false, 'error' => '아이디 또는 비밀번호가 틀렸습니다.']); 
+        }
+        exit;
+    }
+    
+    if ($action === 'register') {
+        $id = trim($_POST['id'] ?? ''); 
+        $nick = trim($_POST['nick'] ?? ''); 
+        $pw = trim($_POST['pw'] ?? '');
+        if (!preg_match('/^[a-zA-Z0-9_]{4,20}$/', $id)) {
+            echo json_encode(['success' => false, 'error' => '아이디는 영문, 숫자, 밑줄만 가능하며 4-20자여야 합니다.']);
+            exit;
+        }
+        if (!preg_match('/^[가-힣a-zA-Z0-9_]{2,20}$/', $nick)) {
+            echo json_encode(['success' => false, 'error' => '닉네임은 2-20자여야 합니다.']);
+            exit;
+        }
+        if (strlen($pw) < 6) {
+            echo json_encode(['success' => false, 'error' => '비밀번호는 6자 이상이어야 합니다.']);
+            exit;
+        }
+        $stmt = $mysqli->prepare("SELECT id FROM users WHERE id = ?"); 
+        $stmt->bind_param("s", $id); 
+        $stmt->execute();
+        if ($stmt->get_result()->num_rows > 0) { 
+            echo json_encode(['success' => false, 'error' => '이미 사용중인 아이디입니다.']); 
+            exit; 
+        }
+        $hashed_pw = password_hash($pw, PASSWORD_DEFAULT);
+        $stmt = $mysqli->prepare("INSERT INTO users (id, nick, pw, lv, xp, point, joined, isAdmin) VALUES (?, ?, ?, 1, 0, 100, NOW(), 0)");
+        $stmt->bind_param("sss", $id, $nick, $hashed_pw);
+        echo json_encode(['success' => $stmt->execute()]); 
+        exit;
+    }
+    
+    if ($action === 'logout') { 
+        session_destroy(); 
+        echo json_encode(['success' => true]); 
+        exit; 
+    }
+    
+    if ($action === 'write_post') {
+        $title = htmlspecialchars(trim($_POST['title'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $content = htmlspecialchars(trim($_POST['content'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $writer = htmlspecialchars(trim($_POST['writer'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $category = htmlspecialchars(trim($_POST['category'] ?? '자유게시판'), ENT_QUOTES, 'UTF-8');
+        $game = htmlspecialchars(trim($_POST['game'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $isNotice = intval($_POST['is_notice'] ?? 0);
+        $stmt = $mysqli->prepare("INSERT INTO board_posts (title, content, writer, category, game, created_at, hit, like_count, notice) VALUES (?, ?, ?, ?, ?, NOW(), 0, 0, ?)");
+        $stmt->bind_param("sssssi", $title, $content, $writer, $category, $game, $isNotice);
+        echo json_encode(['success' => $stmt->execute(), 'id' => $stmt->insert_id]); 
+        exit;
+    }
+    
+    if ($action === 'write_comment') {
+        $post_id = intval($_POST['post_id'] ?? 0); 
+        $nick = htmlspecialchars(trim($_POST['nick'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $body = htmlspecialchars(trim($_POST['body'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $stmt = $mysqli->prepare("SELECT comments FROM board_posts WHERE id = ?"); 
+        $stmt->bind_param("i", $post_id); 
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $comments = $row['comments'] ? json_decode($row['comments'], true) : [];
+        $comments[] = ['nick' => $nick, 'body' => $body, 'date' => date('m.d H:i')];
+        $stmt = $mysqli->prepare("UPDATE board_posts SET comments = ? WHERE id = ?");
+        $json = json_encode($comments, JSON_UNESCAPED_UNICODE);
+        $stmt->bind_param("si", $json, $post_id);
+        echo json_encode(['success' => $stmt->execute()]); 
+        exit;
+    }
+    
+    if ($action === 'like') {
+        $post_id = intval($_POST['post_id'] ?? 0); 
+        $user_id = htmlspecialchars(trim($_POST['user_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $type = $_POST['type'] ?? 'like';
+        $stmt = $mysqli->prepare("SELECT likedBy, dislikedBy, like_count FROM board_posts WHERE id = ?"); 
+        $stmt->bind_param("i", $post_id); 
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $likedBy = $row['likedBy'] ? json_decode($row['likedBy'], true) : [];
+        $dislikedBy = $row['dislikedBy'] ? json_decode($row['dislikedBy'], true) : [];
+        $like_count = intval($row['like_count']);
+        if ($type === 'like') { 
+            if (!in_array($user_id, $likedBy)) { 
+                $likedBy[] = $user_id; 
+                $like_count++; 
+                $dislikedBy = array_diff($dislikedBy, [$user_id]); 
+            } 
+        } else { 
+            if (!in_array($user_id, $dislikedBy)) { 
+                $dislikedBy[] = $user_id; 
+                $like_count--; 
+                $likedBy = array_diff($likedBy, [$user_id]); 
+            } 
+        }
+        $stmt = $mysqli->prepare("UPDATE board_posts SET likedBy = ?, dislikedBy = ?, like_count = ? WHERE id = ?");
+        $lj = json_encode(array_values($likedBy)); 
+        $dj = json_encode(array_values($dislikedBy));
+        $stmt->bind_param("ssii", $lj, $dj, $like_count, $post_id);
+        echo json_encode(['success' => $stmt->execute(), 'like_count' => $like_count]); 
+        exit;
+    }
+    
+    if ($action === 'hit') {
+        $post_id = intval($_POST['post_id'] ?? 0);
+        $stmt = $mysqli->prepare("UPDATE board_posts SET hit = hit + 1 WHERE id = ?"); 
+        $stmt->bind_param("i", $post_id); 
+        $stmt->execute();
+        echo json_encode(['success' => true]); 
+        exit;
+    }
+    
+    if ($action === 'delete_post') {
+        $post_id = intval($_POST['id'] ?? 0);
+        $stmt = $mysqli->prepare("DELETE FROM board_posts WHERE id = ?"); 
+        $stmt->bind_param("i", $post_id);
+        echo json_encode(['success' => $stmt->execute()]); 
+        exit;
+    }
+    
+    if ($action === 'update_online') {
+        $user_id = htmlspecialchars(trim($_POST['user_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $nick = htmlspecialchars(trim($_POST['nick'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $onlineUsers = file_exists('online_users.json') ? (json_decode(file_get_contents('online_users.json'), true) ?: []) : [];
+        $onlineUsers = array_filter($onlineUsers, function($u){ return (time()-($u['last_active']??0))<60; });
+        if ($user_id && $nick) {
+            $found = false;
+            foreach ($onlineUsers as &$u) { 
+                if ($u['id'] === $user_id) { 
+                    $u['last_active'] = time(); 
+                    $found = true; 
+                    break; 
+                } 
+            }
+            if (!$found && count($onlineUsers) < 10) $onlineUsers[] = ['id' => $user_id, 'nick' => $nick, 'last_active' => time()];
+        }
+        file_put_contents('online_users.json', json_encode(array_values($onlineUsers)));
+        echo json_encode(['success' => true, 'count' => count($onlineUsers), 'users' => array_values($onlineUsers)]); 
+        exit;
+    }
+    
+    if ($action === 'get_online') {
+        $onlineUsers = file_exists('online_users.json') ? (json_decode(file_get_contents('online_users.json'), true) ?: []) : [];
+        $onlineUsers = array_filter($onlineUsers, function($u){ return (time()-($u['last_active']??0))<60; });
+        file_put_contents('online_users.json', json_encode(array_values($onlineUsers)));
+        echo json_encode(['success' => true, 'count' => count($onlineUsers), 'users' => array_values($onlineUsers)]); 
+        exit;
+    }
+    
+    if ($action === 'set_level') {
+        $target_id = htmlspecialchars(trim($_POST['target_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $lv = intval($_POST['lv'] ?? 1);
+        $cu = $_SESSION['user'] ?? null;
+        if (!$cu || ($cu['isAdmin'] != 1 && $cu['id'] !== 'admin' && $cu['id'] !== 'ranl')) { 
+            echo json_encode(['success' => false, 'error' => '권한 없음']); 
+            exit; 
+        }
+        $stmt = $mysqli->prepare("UPDATE users SET lv=? WHERE id=?"); 
+        $stmt->bind_param("is", $lv, $target_id);
+        echo json_encode(['success' => $stmt->execute()]); 
+        exit;
+    }
+    
+    if ($action === 'delete_user') {
+        $target_id = htmlspecialchars(trim($_POST['target_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $cu = $_SESSION['user'] ?? null;
+        if (!$cu || ($cu['isAdmin'] != 1 && $cu['id'] !== 'admin' && $cu['id'] !== 'ranl')) { 
+            echo json_encode(['success' => false, 'error' => '권한 없음']); 
+            exit; 
+        }
+        $stmt = $mysqli->prepare("DELETE FROM users WHERE id=? AND isAdmin=0"); 
+        $stmt->bind_param("s", $target_id);
+        echo json_encode(['success' => $stmt->execute()]); 
+        exit;
+    }
+    
+    if ($action === 'get_users') {
+        $cu = $_SESSION['user'] ?? null;
+        if (!$cu || ($cu['isAdmin'] != 1 && $cu['id'] !== 'admin' && $cu['id'] !== 'ranl')) { 
+            echo json_encode(['success' => false, 'error' => '권한 없음']); 
+            exit; 
+        }
+        $result = $mysqli->query("SELECT id, nick, lv, point, joined, isAdmin FROM users ORDER BY id ASC");
+        $users = []; 
+        while($r = $result->fetch_assoc()) $users[] = $r;
+        echo json_encode(['success' => true, 'users' => $users]); 
+        exit;
+    }
+    
+    // 팝업 저장 (여러 개)
+    if ($action === 'save_popup') {
+        $popup_id = $_POST['popup_id'] ?? null;
+        $title = htmlspecialchars(trim($_POST['popup_title'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $content = htmlspecialchars(trim($_POST['popup_content'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $link = htmlspecialchars(trim($_POST['popup_link'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $width = intval($_POST['popup_width'] ?? 400);
+        $height = intval($_POST['popup_height'] ?? 300);
+        $top = intval($_POST['popup_top'] ?? 100);
+        $left = intval($_POST['popup_left'] ?? 100);
+        $duration = intval($_POST['popup_duration'] ?? 86400);
+        $order_num = intval($_POST['popup_order'] ?? 0);
+        
+        $popups = file_exists('popup_data.json') ? (json_decode(file_get_contents('popup_data.json'), true) ?: []) : [];
+        
+        if ($popup_id && isset($popups[$popup_id])) {
+            $popups[$popup_id] = [
+                'id' => $popup_id,
+                'title' => $title,
+                'content' => $content,
+                'link' => $link,
+                'width' => $width,
+                'height' => $height,
+                'top' => $top,
+                'left' => $left,
+                'duration' => $duration,
+                'order' => $order_num,
+                'created_at' => $popups[$popup_id]['created_at']
+            ];
+        } else {
+            $newId = uniqid();
+            $popups[$newId] = [
+                'id' => $newId,
+                'title' => $title,
+                'content' => $content,
+                'link' => $link,
+                'width' => $width,
+                'height' => $height,
+                'top' => $top,
+                'left' => $left,
+                'duration' => $duration,
+                'order' => $order_num,
+                'created_at' => time()
+            ];
+        }
+        
+        file_put_contents('popup_data.json', json_encode($popups));
+        echo json_encode(['success' => true]); 
+        exit;
+    }
+    
+    // 팝업 삭제
+    if ($action === 'delete_popup') {
+        $popup_id = $_POST['popup_id'] ?? null;
+        $popups = file_exists('popup_data.json') ? (json_decode(file_get_contents('popup_data.json'), true) ?: []) : [];
+        if ($popup_id && isset($popups[$popup_id])) {
+            unset($popups[$popup_id]);
+            file_put_contents('popup_data.json', json_encode($popups));
+        }
+        echo json_encode(['success' => true]); 
+        exit;
+    }
+    
+    // 팝업 목록 가져오기
+    if ($action === 'get_popups') {
+        $popups = file_exists('popup_data.json') ? (json_decode(file_get_contents('popup_data.json'), true) ?: []) : [];
+        $activePopups = [];
+        foreach ($popups as $p) {
+            $expire = ($p['created_at'] ?? 0) + ($p['duration'] ?? 86400);
+            if ($expire > time()) {
+                $activePopups[] = $p;
+            }
+        }
+        usort($activePopups, function($a, $b) {
+            return ($a['order'] ?? 0) - ($b['order'] ?? 0);
+        });
+        echo json_encode(['success' => true, 'popups' => $activePopups]); 
+        exit;
+    }
+    
+    if ($action === 'save_search') {
+        $keyword = trim($_POST['keyword'] ?? '');
+        $user_id = $_SESSION['user']['id'] ?? null;
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+        if (strlen($keyword) >= 2) {
+            $stmt = $mysqli->prepare("INSERT INTO search_keywords (keyword, user_id, ip) VALUES (?, ?, ?)");
+            $stmt->bind_param("sss", $keyword, $user_id, $ip);
+            $stmt->execute();
+        }
+        echo json_encode(['success' => true]);
+        exit;
+    }
+    
+    // 갤러리 이미지 업로드
+    if ($action === 'upload_gallery') {
+        $title = htmlspecialchars(trim($_POST['title'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $writer = htmlspecialchars(trim($_POST['writer'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $image_data = $_POST['image_data'] ?? '';
+        
+        if (!$title || !$image_data) {
+            echo json_encode(['success' => false, 'error' => '제목과 이미지를 입력하세요']);
+            exit;
+        }
+        
+        $gallery = file_exists('gallery_data.json') ? (json_decode(file_get_contents('gallery_data.json'), true) ?: []) : [];
+        
+        $newId = time() . '_' . rand(1000, 9999);
+        $gallery[$newId] = [
+            'id' => $newId,
+            'title' => $title,
+            'writer' => $writer,
+            'image' => $image_data,
+            'likes' => 0,
+            'liked_by' => [],
+            'created_at' => date('Y-m-d H:i:s'),
+            'timestamp' => time()
+        ];
+        
+        file_put_contents('gallery_data.json', json_encode($gallery));
+        echo json_encode(['success' => true, 'id' => $newId]);
+        exit;
+    }
+    
+    if ($action === 'get_gallery') {
+        $gallery = file_exists('gallery_data.json') ? (json_decode(file_get_contents('gallery_data.json'), true) ?: []) : [];
+        $galleryArray = array_values($gallery);
+        usort($galleryArray, function($a, $b) {
+            return $b['timestamp'] - $a['timestamp'];
+        });
+        echo json_encode(['success' => true, 'images' => $galleryArray]);
+        exit;
+    }
+    
+    if ($action === 'like_gallery') {
+        $image_id = $_POST['image_id'] ?? '';
+        $user_id = $_SESSION['user']['id'] ?? null;
+        
+        if (!$user_id) {
+            echo json_encode(['success' => false, 'error' => '로그인이 필요합니다']);
+            exit;
+        }
+        
+        $gallery = file_exists('gallery_data.json') ? (json_decode(file_get_contents('gallery_data.json'), true) ?: []) : [];
+        
+        if (isset($gallery[$image_id])) {
+            $liked_by = $gallery[$image_id]['liked_by'] ?? [];
+            if (!in_array($user_id, $liked_by)) {
+                $liked_by[] = $user_id;
+                $gallery[$image_id]['liked_by'] = $liked_by;
+                $gallery[$image_id]['likes'] = count($liked_by);
+                file_put_contents('gallery_data.json', json_encode($gallery));
+                echo json_encode(['success' => true, 'likes' => $gallery[$image_id]['likes']]);
+            } else {
+                echo json_encode(['success' => false, 'error' => '이미 추천했습니다']);
+            }
+        } else {
+            echo json_encode(['success' => false, 'error' => '이미지를 찾을 수 없습니다']);
+        }
+        exit;
+    }
+    
+    if ($action === 'delete_gallery') {
+        $image_id = $_POST['image_id'] ?? '';
+        $cu = $_SESSION['user'] ?? null;
+        
+        if (!$cu || ($cu['isAdmin'] != 1 && $cu['id'] !== 'admin')) {
+            echo json_encode(['success' => false, 'error' => '권한 없음']);
+            exit;
+        }
+        
+        $gallery = file_exists('gallery_data.json') ? (json_decode(file_get_contents('gallery_data.json'), true) ?: []) : [];
+        
+        if (isset($gallery[$image_id])) {
+            unset($gallery[$image_id]);
+            file_put_contents('gallery_data.json', json_encode($gallery));
+            echo json_encode(['success' => true]);
+        } else {
+            echo json_encode(['success' => false, 'error' => '이미지를 찾을 수 없습니다']);
+        }
+        exit;
+    }
+}
+
+$dbPosts = [];
+$seenIds = [];
+$result = $mysqli->query("SELECT * FROM board_posts ORDER BY notice DESC, id DESC");
+if ($result) { 
+    while ($row = $result->fetch_assoc()) { 
+        if (isset($seenIds[$row['id']])) {
+            continue;
+        }
+        $seenIds[$row['id']] = true;
+        $row['comments'] = $row['comments'] ? json_decode($row['comments'], true) : []; 
+        $dbPosts[] = $row; 
+    } 
+}
+
+$userLevels = [];
+$userRes = $mysqli->query("SELECT id, nick, lv FROM users");
+if ($userRes) { 
+    while($u = $userRes->fetch_assoc()) { 
+        $userLevels[$u['nick']] = $u['lv']; 
+    } 
+}
+foreach ($dbPosts as &$p) {
+    $p['authorLv'] = isset($userLevels[$p['writer']]) ? $userLevels[$p['writer']] : 1;
+}
+
+$currentUser = isset($_SESSION['user']) ? $_SESSION['user'] : null;
+$memberCount = $mysqli->query("SELECT COUNT(*) FROM users")->fetch_row()[0];
+
+$totalPosts = 0;
+foreach($dbPosts as $p) {
+    if(empty($p['notice']) || $p['notice'] == 0) {
+        $totalPosts++;
+    }
+}
+
+// 공지사항 가져오기 (마퀴용)
+$noticePosts = [];
+foreach($dbPosts as $p) {
+    if($p['notice'] == 1) {
+        $noticePosts[] = $p;
+    }
+}
+
+function h($s){return htmlspecialchars($s ?? '', ENT_QUOTES, 'UTF-8');}
+function lvBadge($lv){
+    if($lv >= 99) return '<span class="lv-badge lv-max">⚡관리자</span>';
+    if($lv >= 30) return '<span class="lv-badge lv-max">🏆레전드</span>';
+    if($lv >= 20) return '<span class="lv-badge lv6">👑마스터</span>';
+    if($lv >= 10) return '<span class="lv-badge lv5">💎다이아</span>';
+    if($lv >= 7)  return '<span class="lv-badge lv4">🥇골드</span>';
+    if($lv >= 4)  return '<span class="lv-badge lv3">🥈실버</span>';
+    if($lv >= 2)  return '<span class="lv-badge lv2">🥉브론즈</span>';
+    return '<span class="lv-badge lv1">🌱뉴비</span>';
+}
+
+if ($currentUser && isset($currentUser['pw'])) {
+    unset($currentUser['pw']);
+    $_SESSION['user'] = $currentUser;
+}
+?>
 <!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RANL | 디스코드 봇 & 웹 솔루션</title>
-<meta name="description" content="RANL — 디스코드 봇 개발, 웹 솔루션, 자동화 시스템 전문 포트폴리오">
-<meta name="author" content="RANL">
-
-<!-- Open Graph -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<title>RANL AD — 소셜 커뮤니티 | 게시판, 갤러리, 실시간 소통</title>
+<meta name="description" content="RANL AD 소셜 커뮤니티 — 게시판, 갤러리, 멤버, 그룹, 실시간 활동 피드, 이미지 공유">
+<meta name="keywords" content="RANL,커뮤니티,소셜,게시판,갤러리,디스코드,이미지공유">
+<meta name="author" content="RANL AD">
+<meta name="robots" content="index, follow">
 <meta property="og:type" content="website">
-<meta property="og:locale" content="ko_KR">
-<meta property="og:title" content="RANL | 디스코드 봇 & 웹 솔루션">
-<meta property="og:description" content="디스코드 봇 개발, 웹 솔루션, 자동화 시스템. RANL과 함께 프로젝트를 시작하세요.">
+<meta property="og:title" content="RANL AD — 소셜 커뮤니티">
+<meta property="og:description" content="RANL AD 소셜 커뮤니티에 오신 것을 환영합니다. 게시판, 갤러리, 실시간 소통">
+<meta property="og:image" content="https://i.imgur.com/7W1eg5S.png">
 <meta property="og:url" content="https://rani-mall.xyz">
-<meta property="og:site_name" content="RANL">
-
-<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@300;400;700;800&display=swap" rel="stylesheet">
+<link rel="canonical" href="https://rani-mall.xyz">
+<link rel="icon" href="https://i.imgur.com/7W1eg5S.png">
+<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@300;400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+/* ========== RANL STUDIO 다크 테마 + 네온 퍼플 ========== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-  body {
-    font-family: 'Noto Sans KR', sans-serif;
-    background: #0a0a0f;
-    color: #f0f0f0;
-    overflow-x: hidden;
-  }
+:root {
+  --bg: #0a0a0f;
+  --surface: rgba(20, 20, 30, 0.7);
+  --surface2: #15151e;
+  --bd: rgba(79, 70, 229, 0.2);
+  --accent: #4f46e5;
+  --accent2: #6366f1;
+  --accent3: #f59e0b;
+  --text: #f0f0f0;
+  --text2: #bbb;
+  --text3: #888;
+  --success: #10b981;
+  --danger: #ef4444;
+  --rad: 12px;
+}
 
-  /* NAV */
-  nav {
-    position: sticky; top: 0; z-index: 100;
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 18px 60px;
-    background: rgba(10,10,15,0.92);
-    border-bottom: 1px solid rgba(79, 70, 229, 0.3);
-    backdrop-filter: blur(12px);
-  }
-  .logo {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: 26px;
-    letter-spacing: 4px;
-    color: #fff;
-  }
-  .logo span { color: #4f46e5; }
+body {
+  font-family: 'Noto Sans KR', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
 
-  /* HERO */
-  .hero {
-    min-height: 100vh;
-    display: flex; align-items: center;
-    position: relative;
-    overflow: hidden;
-    padding: 80px 60px;
-  }
-  .hero-bg {
-    position: absolute; inset: 0;
-    background: radial-gradient(ellipse at 70% 50%, rgba(79, 70, 229, 0.18) 0%, transparent 65%),
-                radial-gradient(ellipse at 20% 80%, rgba(79, 70, 229, 0.12) 0%, transparent 50%),
-                #0a0a0f;
-  }
-  .hero-grid {
-    position: absolute; inset: 0;
-    background-image:
-      linear-gradient(rgba(79, 70, 229, 0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(79, 70, 229, 0.04) 1px, transparent 1px);
-    background-size: 60px 60px;
-  }
-  .hero-content {
-    position: relative; z-index: 2;
-    max-width: 700px;
-  }
-  .hero-tag {
-    display: inline-block;
-    border: 1px solid #4f46e5;
-    color: #4f46e5;
-    font-size: 11px; letter-spacing: 3px;
-    text-transform: uppercase;
-    padding: 6px 16px; margin-bottom: 32px;
-  }
-  .hero-title {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: clamp(52px, 8vw, 96px);
-    line-height: 1;
-    letter-spacing: -1px;
-    margin-bottom: 8px;
-  }
-  .hero-title .accent { color: #4f46e5; }
-  .hero-desc {
-    font-size: 16px; line-height: 1.8;
-    color: #bbb; max-width: 480px; margin-bottom: 48px;
-  }
-  .hero-btns { display: flex; gap: 16px; flex-wrap: wrap; }
-  .btn-primary {
-    display: inline-block;
-    background: #4f46e5; color: #fff;
-    border: none; padding: 16px 40px;
-    font-family: 'Noto Sans KR', sans-serif;
-    font-size: 14px; letter-spacing: 2px;
-    text-transform: uppercase; cursor: pointer;
-    transition: all 0.2s;
-    clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%);
-    text-decoration: none;
-  }
-  .btn-primary:hover { background: #6366f1; transform: translateY(-2px); }
-  .btn-secondary {
-    background: transparent; color: #fff;
-    border: 1px solid rgba(255,255,255,0.3);
-    padding: 16px 40px;
-    font-family: 'Noto Sans KR', sans-serif;
-    font-size: 14px; letter-spacing: 2px;
-    text-transform: uppercase; cursor: pointer;
-    transition: all 0.2s;
-    text-decoration: none;
-    display: inline-block;
-  }
-  .btn-secondary:hover { border-color: #4f46e5; color: #4f46e5; }
+a { color: inherit; text-decoration: none; }
 
-  .hero-stats {
-    position: absolute; right: 60px; top: 50%;
-    transform: translateY(-50%);
-    display: flex; flex-direction: column; gap: 32px;
-    z-index: 2;
-  }
-  .stat-item { text-align: right; }
-  .stat-num {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: 42px; color: #fff; line-height: 1;
-  }
-  .stat-num span { color: #4f46e5; }
-  .stat-label { font-size: 11px; color: #666; letter-spacing: 2px; text-transform: uppercase; margin-top: 4px; }
-  .stat-divider { width: 100%; height: 1px; background: rgba(79, 70, 229, 0.3); }
+/* 네비게이션 */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 18px 60px;
+  background: rgba(10, 10, 15, 0.92);
+  border-bottom: 1px solid rgba(79, 70, 229, 0.3);
+  backdrop-filter: blur(12px);
+}
+.logo {
+  font-family: 'Black Han Sans', sans-serif;
+  font-size: 26px; letter-spacing: 4px; color: #fff; cursor: pointer;
+}
+.logo span { color: var(--accent); }
+.nav-links { display: flex; gap: 1.5rem; }
+.nav-links a { color: var(--text2); font-size: 0.9rem; font-weight: 500; transition: 0.2s; }
+.nav-links a:hover, .nav-links a.on { color: var(--accent); }
+.user-area { display: flex; gap: 1rem; align-items: center; }
+.user-badge { display: flex; align-items: center; gap: 0.5rem; color: var(--text); }
+.btn-login {
+  background: var(--accent); color: #fff; border: none;
+  padding: 8px 20px; border-radius: 6px; font-weight: 600; cursor: pointer;
+}
+.btn-outline {
+  background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.3);
+  padding: 8px 20px; border-radius: 6px; font-weight: 600; cursor: pointer;
+  transition: 0.2s;
+}
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); }
 
-  /* FEATURES */
-  .section { padding: 100px 60px; }
-  .section-label {
-    font-size: 11px; letter-spacing: 4px; color: #4f46e5;
-    text-transform: uppercase; margin-bottom: 16px;
-    display: flex; align-items: center; gap: 12px;
-  }
-  .section-label::after { content: ''; flex: 0 0 40px; height: 1px; background: #4f46e5; }
-  .section-title {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: clamp(32px, 5vw, 54px);
-    line-height: 1.1; margin-bottom: 60px;
-    letter-spacing: -0.5px;
-  }
+/* Hero 섹션 */
+.hero {
+  min-height: 70vh; display: flex; align-items: center; position: relative;
+  overflow: hidden; padding: 80px 60px;
+}
+.hero-bg {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 70% 50%, rgba(79, 70, 229, 0.18) 0%, transparent 65%),
+              radial-gradient(ellipse at 20% 80%, rgba(79, 70, 229, 0.12) 0%, transparent 50%),
+              #0a0a0f;
+}
+.hero-grid {
+  position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(79, 70, 229, 0.04) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(79, 70, 229, 0.04) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+.hero-content { position: relative; z-index: 2; max-width: 700px; }
+.hero-tag {
+  display: inline-block; border: 1px solid var(--accent); color: var(--accent);
+  font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+  padding: 6px 16px; margin-bottom: 32px;
+}
+.hero-title {
+  font-family: 'Black Han Sans', sans-serif;
+  font-size: clamp(52px, 8vw, 96px); line-height: 1;
+  letter-spacing: -1px; margin-bottom: 8px;
+}
+.hero-title .accent { color: var(--accent); }
+.hero-desc {
+  font-size: 16px; line-height: 1.8; color: var(--text2);
+  max-width: 480px; margin-bottom: 48px;
+}
+.hero-btns { display: flex; gap: 16px; flex-wrap: wrap; }
+.btn-primary {
+  display: inline-block; background: var(--accent); color: #fff;
+  border: none; padding: 16px 40px; font-size: 14px; letter-spacing: 2px;
+  text-transform: uppercase; cursor: pointer; transition: 0.2s;
+  clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%);
+  text-decoration: none;
+}
+.btn-primary:hover { background: var(--accent2); transform: translateY(-2px); }
 
-  .features-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1px;
-    background: rgba(79, 70, 229, 0.2);
-    border: 1px solid rgba(79, 70, 229, 0.2);
-  }
-  .feature-card {
-    background: #0d0d12;
-    padding: 48px 36px;
-    transition: background 0.3s;
-    position: relative; overflow: hidden;
-  }
-  .feature-card::before {
-    content: '';
-    position: absolute; top: 0; left: 0;
-    width: 3px; height: 0;
-    background: #4f46e5;
-    transition: height 0.3s;
-  }
-  .feature-card:hover { background: #111118; }
-  .feature-card:hover::before { height: 100%; }
-  .feature-icon {
-    width: 48px; height: 48px; margin-bottom: 24px;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .feature-icon svg { width: 32px; height: 32px; stroke: #4f46e5; fill: none; stroke-width: 1.5; }
-  .feature-num {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: 64px; color: rgba(79, 70, 229, 0.08);
-    position: absolute; top: 20px; right: 24px;
-    line-height: 1; pointer-events: none;
-  }
-  .feature-title { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
-  .feature-desc { font-size: 14px; color: #777; line-height: 1.8; }
+/* 마퀴 */
+.marquee-section {
+  border-top: 1px solid rgba(79, 70, 229, 0.2);
+  border-bottom: 1px solid rgba(79, 70, 229, 0.2);
+  padding: 20px 0; overflow: hidden;
+  background: rgba(79, 70, 229, 0.04);
+}
+.marquee-track {
+  display: flex; gap: 60px; width: max-content;
+  animation: scroll 25s linear infinite;
+}
+.marquee-track span {
+  font-family: 'Black Han Sans', sans-serif; font-size: 13px;
+  letter-spacing: 4px; text-transform: uppercase; white-space: nowrap;
+  color: #444;
+}
+.marquee-track span.purple { color: var(--accent); }
+.marquee-track a { color: var(--accent); text-decoration: none; }
+.marquee-track a:hover { text-decoration: underline; }
+@keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 
-  /* MARQUEE */
-  .marquee-section {
-    border-top: 1px solid rgba(79, 70, 229, 0.2);
-    border-bottom: 1px solid rgba(79, 70, 229, 0.2);
-    padding: 20px 0; overflow: hidden;
-    background: rgba(79, 70, 229, 0.04);
-  }
-  .marquee-track {
-    display: flex; gap: 60px; width: max-content;
-    animation: scroll 20s linear infinite;
-  }
-  .marquee-track span {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: 13px; letter-spacing: 4px;
-    text-transform: uppercase; white-space: nowrap;
-    color: #444;
-  }
-  .marquee-track span.purple { color: #4f46e5; }
-  @keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+/* 대시보드 섹션 */
+.dashboard-section {
+  max-width: 1280px; margin: 0 auto; padding: 60px 40px;
+}
+.stats-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-bottom: 48px;
+}
+.stat-card {
+  background: var(--surface); border: 1px solid var(--bd);
+  border-radius: var(--rad); padding: 28px 24px;
+  backdrop-filter: blur(8px);
+}
+.stat-value {
+  font-family: 'Black Han Sans', sans-serif;
+  font-size: 36px; color: var(--accent);
+}
+.stat-label {
+  color: var(--text3); text-transform: uppercase;
+  letter-spacing: 2px; font-size: 11px; margin-top: 8px;
+}
 
-  /* MODES */
-  .modes-grid {
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 24px;
-  }
-  .mode-card {
-    border: 1px solid rgba(255,255,255,0.07);
-    padding: 48px 40px;
-    position: relative; overflow: hidden;
-    transition: border-color 0.3s;
-  }
-  .mode-card:hover { border-color: rgba(79, 70, 229, 0.5); }
-  .mode-card.featured {
-    border-color: rgba(79, 70, 229, 0.4);
-    background: rgba(79, 70, 229, 0.05);
-  }
-  .mode-badge {
-    display: inline-block;
-    background: #4f46e5; color: #fff;
-    font-size: 10px; letter-spacing: 2px;
-    text-transform: uppercase; padding: 4px 12px;
-    margin-bottom: 24px;
-  }
-  .mode-title {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: 28px; margin-bottom: 16px;
-  }
-  .mode-desc { font-size: 14px; color: #777; line-height: 1.8; margin-bottom: 28px; }
-  .mode-tags { display: flex; flex-wrap: wrap; gap: 8px; }
-  .tag {
-    border: 1px solid rgba(255,255,255,0.15);
-    font-size: 11px; color: #888;
-    padding: 4px 12px; letter-spacing: 1px;
-  }
+/* 게시판 패널 */
+.board-panel {
+  background: rgba(15, 15, 22, 0.8); border: 1px solid var(--bd);
+  border-radius: 16px; padding: 32px; backdrop-filter: blur(8px);
+}
+.panel-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 24px; border-bottom: 1px solid rgba(255,255,255,0.1);
+  padding-bottom: 16px;
+}
+.panel-title {
+  font-family: 'Black Han Sans', sans-serif; font-size: 24px;
+  letter-spacing: -0.5px;
+}
+.panel-title i { color: var(--accent); margin-right: 8px; }
 
-  /* FOOTER */
-  footer {
-    border-top: 1px solid rgba(255,255,255,0.07);
-    padding: 40px 60px;
-    text-align: center;
-  }
-  .footer-logo {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: 20px; letter-spacing: 4px;
-    margin-bottom: 16px;
-  }
-  .footer-logo span { color: #4f46e5; }
-  .footer-copy { font-size: 12px; color: #666; letter-spacing: 1px; }
+.board-table { width: 100%; border-collapse: collapse; }
+.board-table th {
+  text-align: left; padding: 12px 8px; color: #666;
+  font-weight: 400; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.board-table td {
+  padding: 14px 8px; border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: #ccc;
+}
+.board-table tr:hover td { background: rgba(79, 70, 229, 0.05); cursor: pointer; }
+.badge-notice { background: var(--accent); color: #fff; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: 700; }
+.badge-new { background: var(--danger); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 9px; margin-left: 6px; }
+.post-title { color: var(--text); }
 
-  @media (max-width: 1024px) {
-    .features-grid { grid-template-columns: 1fr 1fr; }
-    .hero-stats { display: none; }
-    nav, .section, .hero { padding-left: 24px; padding-right: 24px; }
-  }
-  @media (max-width: 768px) {
-    .features-grid { grid-template-columns: 1fr; }
-    .modes-grid { grid-template-columns: 1fr; }
-    .hero-title { font-size: 48px; }
-  }
+/* 페이지 전환 */
+.page { display: none; }
+.page.active { display: block; }
+
+/* 모달 */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.8); backdrop-filter: blur(6px);
+  z-index: 1000; align-items: center; justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal-box {
+  background: var(--surface2); border: 1px solid var(--accent);
+  border-radius: 16px; padding: 32px; width: 100%; max-width: 400px;
+}
+.modal-box h3 { color: var(--accent); margin-bottom: 24px; }
+.auth-input {
+  width: 100%; background: #0a0a0f; border: 1px solid #333;
+  border-radius: 8px; padding: 12px 16px; color: #fff;
+  margin-bottom: 16px; outline: none;
+}
+.auth-input:focus { border-color: var(--accent); }
+.auth-btn {
+  width: 100%; background: var(--accent); color: #fff;
+  border: none; border-radius: 8px; padding: 14px;
+  font-weight: 700; cursor: pointer;
+}
+.modal-tabs {
+  display: flex; gap: 0.5rem; margin-bottom: 1.5rem;
+}
+.modal-tab {
+  flex: 1; padding: 0.5rem; text-align: center; background: #1a1a25;
+  border-radius: 8px; cursor: pointer; color: var(--text2);
+}
+.modal-tab.on { background: var(--accent); color: #fff; }
+.modal-close {
+  position: absolute; top: 1rem; right: 1rem;
+  background: none; border: none; color: var(--text2);
+  font-size: 1.5rem; cursor: pointer;
+}
+
+/* 글쓰기 카드 */
+.write-card {
+  background: var(--surface2); border: 1px solid var(--accent);
+  border-radius: 16px; padding: 32px; max-width: 800px;
+  margin: 40px auto;
+}
+.write-card textarea { min-height: 200px; resize: vertical; }
+.fi {
+  width: 100%; background: #0a0a0f; border: 1px solid #333;
+  border-radius: 8px; padding: 12px 16px; color: #fff;
+  margin-bottom: 16px; outline: none;
+}
+
+/* 갤러리 */
+.gallery-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 20px;
+}
+.gallery-item {
+  background: var(--surface); border: 1px solid var(--bd);
+  border-radius: var(--rad); overflow: hidden; transition: 0.2s;
+}
+.gallery-item:hover { transform: translateY(-4px); border-color: var(--accent); }
+.gallery-image { width: 100%; height: 160px; object-fit: cover; cursor: pointer; }
+.gallery-info { padding: 12px; }
+.gallery-title { font-weight: 700; margin-bottom: 8px; }
+.gallery-meta { display: flex; justify-content: space-between; color: var(--text3); font-size: 12px; }
+
+/* 푸터 */
+footer {
+  border-top: 1px solid rgba(255,255,255,0.07);
+  padding: 40px 60px; text-align: center; color: #666;
+  font-size: 12px; letter-spacing: 1px;
+}
+
+/* 반응형 */
+@media (max-width: 1024px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 768px) {
+  nav { padding: 18px 20px; }
+  .nav-links { display: none; }
+  .hero { padding: 60px 20px; }
+  .dashboard-section { padding: 40px 20px; }
+  .board-table th:nth-child(4), .board-table td:nth-child(4),
+  .board-table th:nth-child(5), .board-table td:nth-child(5) { display: none; }
+}
 </style>
 </head>
 <body>
 
 <nav>
-  <div class="logo"><span>RANL</span> STUDIO</div>
+  <div class="logo" onclick="goPage('home')"><span>RANL</span> AD</div>
+  <div class="nav-links">
+    <a href="#" onclick="goPage('home');return false;" class="on" id="nav-home">홈</a>
+    <a href="#" onclick="goPage('activity');return false;" id="nav-act">활동피드</a>
+    <a href="#" onclick="goPage('gallery');return false;" id="nav-gallery">갤러리</a>
+    <a href="#" onclick="goPage('board','자유게시판');return false;" id="nav-free">자유게시판</a>
+    <a href="#" onclick="goPage('board','공략게시판');return false;" id="nav-tip">공략</a>
+    <a href="#" onclick="goPage('board','유머게시판');return false;" id="nav-fun">유머</a>
+    <?php if($currentUser && ($currentUser['isAdmin']==1 || $currentUser['id']==='admin')): ?>
+      <a href="#" onclick="goPage('admin');return false;" id="nav-admin" style="color:var(--danger);">관리자</a>
+    <?php endif; ?>
+  </div>
+  <div class="user-area">
+    <?php if($currentUser): ?>
+      <div class="user-badge">
+        <span><?= h($currentUser['nick']) ?> <?= lvBadge($currentUser['lv']) ?></span>
+      </div>
+      <button class="btn-outline" onclick="goPage('profile')">프로필</button>
+      <button class="btn-login" onclick="doLogout()">로그아웃</button>
+    <?php else: ?>
+      <button class="btn-login" onclick="showModal('login')">로그인</button>
+    <?php endif; ?>
+  </div>
 </nav>
 
-<section class="hero">
-  <div class="hero-bg"></div>
-  <div class="hero-grid"></div>
-  <div class="hero-content">
-    <div class="hero-tag">Korea's Dev & Bot Studio</div>
-    <h1 class="hero-title">BUILD<br><span class="accent">DISCORD</span><br>SOLUTIONS</h1>
-    <p class="hero-desc">디스코드 봇, 웹 솔루션, 자동화 시스템. 안정적이고 깔끔한 코드로 프로젝트를 완성합니다.</p>
-    <div class="hero-btns">
-      <a href="#" class="btn-primary">프로젝트 문의</a>
-      <a href="#" class="btn-secondary">포트폴리오</a>
+<div id="page-home" class="page active">
+  <section class="hero">
+    <div class="hero-bg"></div>
+    <div class="hero-grid"></div>
+    <div class="hero-content">
+      <div class="hero-tag">RANL AD · COMMUNITY</div>
+      <h1 class="hero-title">BUILD<br><span class="accent">YOUR</span><br>LEGACY</h1>
+      <p class="hero-desc">자유 게시판, 갤러리, 실시간 피드까지. RANL AD에서 특별한 커뮤니티 경험을 시작하세요.</p>
+      <div class="hero-btns">
+        <a href="#" onclick="goPage('write');return false;" class="btn-primary">글쓰기</a>
+        <a href="#" onclick="goPage('board');return false;" class="btn-primary" style="background:transparent; border:1px solid var(--accent);">둘러보기</a>
+      </div>
     </div>
-  </div>
-  <div class="hero-stats">
-    <div class="stat-item">
-      <div class="stat-num">15<span>+</span></div>
-      <div class="stat-label">완료된 프로젝트</div>
-    </div>
-    <div class="stat-divider"></div>
-    <div class="stat-item">
-      <div class="stat-num">24<span>/</span>7</div>
-      <div class="stat-label">지원 가능</div>
-    </div>
-    <div class="stat-divider"></div>
-    <div class="stat-item">
-      <div class="stat-num">100<span>%</span></div>
-      <div class="stat-label">만족도</div>
-    </div>
-  </div>
-</section>
+  </section>
 
-<div class="marquee-section">
-  <div class="marquee-track">
-    <span class="purple">RANL STUDIO</span><span>디스코드 봇 개발</span><span class="purple">웹 솔루션</span><span>자동화 시스템</span>
-    <span class="purple">RANL STUDIO</span><span>디스코드 봇 개발</span><span class="purple">웹 솔루션</span><span>자동화 시스템</span>
-    <span class="purple">RANL STUDIO</span><span>디스코드 봇 개발</span><span class="purple">웹 솔루션</span><span>자동화 시스템</span>
+  <div class="marquee-section">
+    <div class="marquee-track">
+      <?php if(count($noticePosts) > 0): ?>
+        <?php foreach($noticePosts as $notice): ?>
+          <span class="purple">📢 <a href="#" onclick="openPost(<?= $notice['id'] ?>);return false;">[공지] <?= h($notice['title']) ?></a></span>
+        <?php endforeach; ?>
+      <?php else: ?>
+        <span class="purple">✨ RANL AD 커뮤니티에 오신 것을 환영합니다! ✨</span>
+        <span>💬 자유롭게 소통하고 정보를 공유하세요</span>
+        <span class="purple">📷 갤러리에 이미지를 올려보세요</span>
+      <?php endif; ?>
+      <?php if(count($noticePosts) > 0): ?>
+        <?php foreach($noticePosts as $notice): ?>
+          <span class="purple">📢 <a href="#" onclick="openPost(<?= $notice['id'] ?>);return false;">[공지] <?= h($notice['title']) ?></a></span>
+        <?php endforeach; ?>
+      <?php else: ?>
+        <span class="purple">✨ RANL AD 커뮤니티에 오신 것을 환영합니다! ✨</span>
+        <span>💬 자유롭게 소통하고 정보를 공유하세요</span>
+        <span class="purple">📷 갤러리에 이미지를 올려보세요</span>
+      <?php endif; ?>
+    </div>
+  </div>
+
+  <div class="dashboard-section">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-value"><?= $totalPosts ?></div><div class="stat-label">전체 게시글</div></div>
+      <div class="stat-card"><div class="stat-value"><?= $memberCount ?></div><div class="stat-label">회원 수</div></div>
+      <div class="stat-card"><div class="stat-value" id="online-count">0</div><div class="stat-label">현재 접속자</div></div>
+      <div class="stat-card"><div class="stat-value">100%</div><div class="stat-label">응답률</div></div>
+    </div>
+
+    <div class="board-panel">
+      <div class="panel-header">
+        <div class="panel-title"><i>📌</i> 공지사항</div>
+      </div>
+      <table class="board-table">
+        <thead><tr><th>번호</th><th>제목</th><th>작성자</th><th>날짜</th><th>조회</th></tr></thead>
+        <tbody id="home-notice-rows"></tbody>
+      </table>
+    </div>
+
+    <div class="board-panel" style="margin-top:24px;">
+      <div class="panel-header">
+        <div class="panel-title"><i>🔥</i> 인기 게시글</div>
+        <a href="#" onclick="goPage('board');return false;" style="color:var(--accent);">더보기 →</a>
+      </div>
+      <table class="board-table">
+        <thead><tr><th>번호</th><th>제목</th><th>작성자</th><th>날짜</th><th>조회</th></tr></thead>
+        <tbody id="home-hot-rows"></tbody>
+      </table>
+    </div>
+
+    <div class="board-panel" style="margin-top:24px;">
+      <div class="panel-header">
+        <div class="panel-title"><i>🆕</i> 최신 게시글</div>
+        <a href="#" onclick="goPage('board');return false;" style="color:var(--accent);">더보기 →</a>
+      </div>
+      <table class="board-table">
+        <thead><tr><th>번호</th><th>제목</th><th>작성자</th><th>날짜</th><th>조회</th></tr></thead>
+        <tbody id="home-new-rows"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
-<section class="section">
-  <div class="section-label">Core Services</div>
-  <h2 class="section-title">RANL이 다른 이유</h2>
-  <div class="features-grid">
-    <div class="feature-card">
-      <div class="feature-num">01</div>
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+<div id="page-activity" class="page">
+  <div class="dashboard-section" style="padding-top:40px;">
+    <div class="board-panel">
+      <div class="panel-header">
+        <div class="panel-title"><i>📡</i> 실시간 활동 피드</div>
       </div>
-      <h3 class="feature-title">디스코드 봇 개발</h3>
-      <p class="feature-desc">티켓 시스템, 경제/레벨링, API 연동, 맞춤형 기능까지. 최신 컴포넌트 v2 활용.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-num">02</div>
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <div class="feed-tabs" style="display:flex;gap:0.5rem;margin-bottom:20px;flex-wrap:wrap;">
+        <button class="feed-tab on" onclick="setFeedFilter('all',this)" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;">전체</button>
+        <button class="feed-tab" onclick="setFeedFilter('자유게시판',this)" style="background:#1a1a25;color:var(--text2);border:none;padding:8px 16px;border-radius:20px;cursor:pointer;">자유</button>
+        <button class="feed-tab" onclick="setFeedFilter('공략게시판',this)" style="background:#1a1a25;color:var(--text2);border:none;padding:8px 16px;border-radius:20px;cursor:pointer;">공략</button>
+        <button class="feed-tab" onclick="setFeedFilter('유머게시판',this)" style="background:#1a1a25;color:var(--text2);border:none;padding:8px 16px;border-radius:20px;cursor:pointer;">유머</button>
+        <button class="feed-tab" onclick="setFeedFilter('질문게시판',this)" style="background:#1a1a25;color:var(--text2);border:none;padding:8px 16px;border-radius:20px;cursor:pointer;">질문</button>
       </div>
-      <h3 class="feature-title">웹사이트 개발</h3>
-      <p class="feature-desc">반응형 웹, 관리자 패널, 커뮤니티 사이트, 대시보드. Flask 기반 백엔드.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-num">03</div>
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-      </div>
-      <h3 class="feature-title">자동화 & 배포</h3>
-      <p class="feature-desc">cPanel, Cloudflare, SSL 설정, 서버 모니터링. 개발부터 배포까지 원스톱.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-num">04</div>
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
-      </div>
-      <h3 class="feature-title">풀스택 프로젝트</h3>
-      <p class="feature-desc">프론트부터 백엔드, DB 설계까지. 완성도 높은 통합 개발.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-num">05</div>
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      </div>
-      <h3 class="feature-title">API 연동</h3>
-      <p class="feature-desc">REST API, 외부 서비스 연동, 데이터 크롤링 등 다양한 통합 작업.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-num">06</div>
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
-      </div>
-      <h3 class="feature-title">24/7 유지보수</h3>
-      <p class="feature-desc">지속적인 모니터링, 버그 수정, 업데이트. 안정적인 운영 지원.</p>
+      <div id="activity-feed"></div>
     </div>
   </div>
-</section>
+</div>
 
-<section class="section" style="padding-top: 0;">
-  <div class="section-label">Our Solutions</div>
-  <h2 class="section-title">대표 프로젝트</h2>
-  <div class="modes-grid">
-    <div class="mode-card featured">
-      <div class="mode-badge">플래그십</div>
-      <h3 class="mode-title">RLNL 티켓봇 v2</h3>
-      <p class="mode-desc">드롭다운/모달/버튼 기반 고급 티켓 시스템. 자동 트랜스크립트 저장, 관리자 로그 채널 연동.</p>
-      <div class="mode-tags">
-        <span class="tag">discord.py</span>
-        <span class="tag">Components v2</span>
-        <span class="tag">슬래시 커맨드</span>
+<div id="page-board" class="page">
+  <div class="dashboard-section" style="padding-top:40px;">
+    <div class="board-panel">
+      <div class="panel-header">
+        <div class="panel-title"><i>📋</i> <span id="board-title">자유게시판</span></div>
+        <div style="display:flex;gap:10px;">
+          <input type="text" id="search-input" placeholder="검색" style="background:#0a0a0f;border:1px solid #333;border-radius:8px;padding:8px 16px;color:#fff;" onkeydown="if(event.key==='Enter')doSearch()">
+          <button class="btn-primary" style="padding:8px 16px;" onclick="doSearch()">검색</button>
+          <button class="btn-primary" style="padding:8px 24px;" onclick="goPage('write')">글쓰기</button>
+        </div>
       </div>
-    </div>
-    <div class="mode-card">
-      <h3 class="mode-title">RANL 커뮤니티</h3>
-      <p class="mode-desc">자유게시판, 갤러리, 관리자 기능, 실시간 접속자, 팝업 관리까지 갖춘 통합 커뮤니티 사이트.</p>
-      <div class="mode-tags">
-        <span class="tag">PHP</span>
-        <span class="tag">MySQL</span>
-        <span class="tag">JS</span>
-      </div>
-    </div>
-    <div class="mode-card">
-      <h3 class="mode-title">멀티봇 대시보드</h3>
-      <p class="mode-desc">여러 디스코드 봇을 한 곳에서 관리할 수 있는 웹 대시보드. 서버 상태, 로그 확인 가능.</p>
-      <div class="mode-tags">
-        <span class="tag">Flask</span>
-        <span class="tag">Discord API</span>
-        <span class="tag">JS</span>
-      </div>
-    </div>
-    <div class="mode-card">
-      <h3 class="mode-title">라이선스 관리 시스템</h3>
-      <p class="mode-desc">Firebase 기반 라이선스 발급/관리/검증 시스템. 웹 패널 연동, 만료 알림.</p>
-      <div class="mode-tags">
-        <span class="tag">Firebase</span>
-        <span class="tag">OAuth</span>
-        <span class="tag">웹훅</span>
-      </div>
+      <table class="board-table">
+        <thead><tr><th>번호</th><th>제목</th><th>작성자</th><th>날짜</th><th>조회</th></tr></thead>
+        <tbody id="board-rows"></tbody>
+      </table>
+      <div class="paging" id="board-paging" style="display:flex;justify-content:center;gap:0.5rem;margin-top:24px;"></div>
     </div>
   </div>
-</section>
+</div>
 
-<footer>
-  <div class="footer-logo"><span>RANL</span> STUDIO</div>
-  <div class="footer-copy">© 2026 RANL. All rights reserved. | 디스코드 봇 · 웹 솔루션 · 자동화</div>
-</footer>
+<div id="page-post" class="page">
+  <div class="dashboard-section" style="padding-top:40px;">
+    <button class="btn-outline" onclick="goBack()" style="margin-bottom:20px;">← 목록으로</button>
+    <div class="board-panel" id="post-detail-content"></div>
+    <div class="board-panel" style="margin-top:24px;">
+      <div class="panel-title" style="margin-bottom:20px;"><i>💬</i> 댓글 <span id="cmt-cnt">0</span>개</div>
+      <div id="cmt-list"></div>
+      <textarea class="auth-input" id="cmt-input" placeholder="댓글을 입력하세요..." style="margin-top:20px;"></textarea>
+      <button class="btn-primary" style="padding:12px 30px; margin-top:10px;" onclick="submitComment()">등록</button>
+    </div>
+  </div>
+</div>
 
+<div id="page-write" class="page">
+  <div class="write-card">
+    <h2 style="color:var(--accent); margin-bottom:24px;">✏️ 글쓰기</h2>
+    <select class="fi" id="write-cat">
+      <option value="자유게시판">자유게시판</option>
+      <option value="공략게시판">공략게시판</option>
+      <option value="유머게시판">유머게시판</option>
+      <option value="질문게시판">질문게시판</option>
+      <option value="종합게임">종합게임</option>
+    </select>
+    <select class="fi" id="write-game">
+      <option value="">게임 선택 (선택사항)</option>
+      <option value="스팀">🎮 스팀</option>
+      <option value="넥슨">🎮 넥슨</option>
+      <option value="배틀그라운드">🔫 배틀그라운드</option>
+      <option value="롤(LOL)">⚔️ 롤(LOL)</option>
+      <option value="로스트아크">🗡️ 로스트아크</option>
+    </select>
+    <input class="fi" id="write-title" placeholder="제목">
+    <textarea class="fi" id="write-body" placeholder="내용"></textarea>
+    <div id="notice-chk-wrap" style="display:none;margin-bottom:16px;"><label><input type="checkbox" id="write-notice"> 📌 공지사항 등록</label></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn-outline" onclick="goBack()">취소</button>
+      <button class="btn-primary" onclick="submitPost()">등록</button>
+    </div>
+  </div>
+</div>
+
+<div id="page-gallery" class="page">
+  <div class="dashboard-section">
+    <div class="board-panel">
+      <div class="panel-header">
+        <div class="panel-title"><i>📷</i> 갤러리</div>
+        <?php if($currentUser): ?>
+        <button class="btn-primary" style="padding:10px 24px;" onclick="document.getElementById('gallery-file').click()">이미지 업로드</button>
+        <?php endif; ?>
+      </div>
+      <input type="file" id="gallery-file" accept="image/*" style="display:none;" onchange="previewAndUpload(this)">
+      <div id="gallery-grid" class="gallery-grid"></div>
+    </div>
+  </div>
+</div>
+
+<div id="page-profile" class="page">
+  <div class="dashboard-section">
+    <div class="board-panel" id="profile-box"></div>
+    <div class="board-panel" style="margin-top:24px;">
+      <div class="panel-title"><i>📝</i> 내가 쓴 글</div>
+      <table class="board-table">
+        <thead><tr><th>번호</th><th>제목</th><th>날짜</th><th>조회</th></tr></thead>
+        <tbody id="my-post-rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="page-admin" class="page">
+  <div class="dashboard-section">
+    <div class="board-panel">
+      <div class="panel-title" style="color:var(--danger);"><i>🔒</i> 관리자 패널</div>
+      <div class="stats-grid" style="margin:20px 0;">
+        <div class="stat-card"><div class="stat-value" id="admin-posts">0</div><div class="stat-label">전체 글</div></div>
+        <div class="stat-card"><div class="stat-value"><?= $memberCount ?></div><div class="stat-label">회원 수</div></div>
+        <div class="stat-card"><div class="stat-value" id="adm-online">0</div><div class="stat-label">접속 중</div></div>
+        <div class="stat-card"><div class="stat-value" id="admin-notice">0</div><div class="stat-label">공지사항</div></div>
+      </div>
+      <button class="btn-primary" onclick="loadAdminUsers()">회원 목록 불러오기</button>
+      <table class="board-table" style="margin-top:20px;">
+        <thead><tr><th>아이디</th><th>닉네임</th><th>레벨</th><th>포인트</th><th>관리</th></tr></thead>
+        <tbody id="admin-user-table"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="auth-modal" class="modal-overlay">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <h3>RANL AD</h3>
+    <div class="modal-tabs">
+      <div class="modal-tab on" onclick="switchTab('login')">로그인</div>
+      <div class="modal-tab" onclick="switchTab('register')">회원가입</div>
+    </div>
+    <div id="form-login">
+      <input class="auth-input" id="login-id" placeholder="아이디">
+      <input class="auth-input" id="login-pw" type="password" placeholder="비밀번호">
+      <button class="auth-btn" onclick="doLogin()">로그인</button>
+      <div id="login-msg" style="color:var(--danger); margin-top:10px;"></div>
+    </div>
+    <div id="form-register" style="display:none;">
+      <input class="auth-input" id="reg-id" placeholder="아이디 (4~12자)">
+      <input class="auth-input" id="reg-nick" placeholder="닉네임 (2~10자)">
+      <input class="auth-input" id="reg-pw" type="password" placeholder="비밀번호 (6자 이상)">
+      <input class="auth-input" id="reg-pw2" type="password" placeholder="비밀번호 확인">
+      <button class="auth-btn" onclick="doRegister()">회원가입</button>
+      <div id="reg-msg" style="color:var(--danger); margin-top:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<footer>© 2026 RANL AD. All rights reserved. | 디스코드 봇 · 웹 솔루션 · 커뮤니티</footer>
+
+<script>
+var csrfToken = '<?= $_SESSION['csrf_token'] ?>';
+var POSTS = <?= json_encode($dbPosts) ?>;
+var CU = <?= json_encode($currentUser) ?>;
+var curPage = 'home', curBoard = '자유게시판', curPostId = null, prevPage = 'home', bPage = 1, searchQ = '', feedFilter = 'all';
+
+function h(s){ return String(s||'').replace(/[&<>]/g, m => m==='&'?'&amp;':m==='<'?'&lt;':'&gt;'); }
+function lvJS(lv){ if(lv>=99)return'⚡관리자'; if(lv>=30)return'🏆레전드'; if(lv>=20)return'👑마스터'; if(lv>=10)return'💎다이아'; if(lv>=7)return'🥇골드'; if(lv>=4)return'🥈실버'; if(lv>=2)return'🥉브론즈'; return'🌱뉴비'; }
+function showToast(msg){ alert(msg); }
+function p(body){ return fetch('',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body+'&csrf_token='+csrfToken}).then(r=>r.json()); }
+
+function showModal(t){ document.getElementById('auth-modal').classList.add('show'); switchTab(t||'login'); }
+function closeModal(){ document.getElementById('auth-modal').classList.remove('show'); }
+function switchTab(t){
+  var isLogin = t==='login';
+  document.querySelectorAll('.modal-tab').forEach((el,i)=> el.classList.toggle('on', (i===0&&isLogin)||(i===1&&!isLogin)));
+  document.getElementById('form-login').style.display = isLogin?'block':'none';
+  document.getElementById('form-register').style.display = isLogin?'none':'block';
+}
+function doLogin(){
+  var id = document.getElementById('login-id').value.trim(), pw = document.getElementById('login-pw').value;
+  if(!id||!pw){ document.getElementById('login-msg').textContent='아이디와 비밀번호를 입력하세요'; return; }
+  p('action=login&id='+encodeURIComponent(id)+'&pw='+encodeURIComponent(pw)).then(d=>{ if(d.success) location.reload(); else document.getElementById('login-msg').textContent=d.error; });
+}
+function doRegister(){
+  var id = document.getElementById('reg-id').value.trim(), nick = document.getElementById('reg-nick').value.trim(), pw = document.getElementById('reg-pw').value, pw2 = document.getElementById('reg-pw2').value, msg = document.getElementById('reg-msg');
+  if(!id||!nick||!pw){ msg.textContent='모든 항목을 입력하세요'; return; }
+  if(pw!==pw2){ msg.textContent='비밀번호가 일치하지 않습니다'; return; }
+  p('action=register&id='+encodeURIComponent(id)+'&nick='+encodeURIComponent(nick)+'&pw='+encodeURIComponent(pw)).then(d=>{ if(d.success){ msg.textContent='가입 완료!'; setTimeout(()=>switchTab('login'),1000); } else msg.textContent=d.error; });
+}
+function doLogout(){ p('action=logout').then(()=>location.reload()); }
+
+function makeRows(posts){
+  if(!posts || !posts.length) return '<tr><td colspan="5">게시글이 없습니다.</td></tr>';
+  return posts.map(post => {
+    var isNew = (new Date() - new Date(post.created_at)) < 86400000;
+    var num = post.notice == 1 ? '<span class="badge-notice">공지</span>' : post.id;
+    return '<tr onclick="openPost('+post.id+')"><td>'+num+'</td><td><span class="post-title">'+h(post.title)+'</span>'+(isNew?'<span class="badge-new">N</span>':'')+'</td><td>'+h(post.writer)+'</td><td>'+(post.created_at||'').slice(5,10)+'</td><td>'+post.hit+'</td></tr>';
+  }).join('');
+}
+
+function renderHome(){
+  var normalPosts = POSTS.filter(x => x.notice == 0);
+  var noticePosts = POSTS.filter(x => x.notice == 1);
+  var hotPosts = normalPosts.slice().sort((a,b) => (b.like_count||0) - (a.like_count||0)).slice(0,5);
+  var newPosts = normalPosts.slice().sort((a,b) => b.id - a.id).slice(0,8);
+  document.getElementById('home-notice-rows').innerHTML = makeRows(noticePosts);
+  document.getElementById('home-hot-rows').innerHTML = makeRows(hotPosts);
+  document.getElementById('home-new-rows').innerHTML = makeRows(newPosts);
+  if(document.getElementById('admin-posts')) {
+    document.getElementById('admin-posts').textContent = POSTS.length;
+    document.getElementById('admin-notice').textContent = noticePosts.length;
+  }
+}
+
+function setFeedFilter(f, el){
+  feedFilter = f;
+  document.querySelectorAll('.feed-tab').forEach(t => { t.classList.remove('on'); t.style.background='#1a1a25'; t.style.color='var(--text2)'; });
+  el.classList.add('on'); el.style.background='var(--accent)'; el.style.color='#fff';
+  renderFeed();
+}
+
+function renderFeed(){
+  var posts = feedFilter === 'all' ? POSTS.filter(x => x.notice == 0) : POSTS.filter(x => x.notice == 0 && x.category === feedFilter);
+  var sorted = posts.sort((a,b) => b.id - a.id).slice(0,15);
+  var c = document.getElementById('activity-feed');
+  if(!sorted.length){ c.innerHTML = '<div style="text-align:center;padding:2rem;">게시글이 없습니다.</div>'; return; }
+  c.innerHTML = sorted.map(post => {
+    var cmts = Array.isArray(post.comments) ? post.comments : [];
+    var isAdmin = CU && (CU.isAdmin == 1 || CU.id === 'admin');
+    return '<div style="background:var(--surface);border:1px solid var(--bd);border-radius:12px;padding:20px;margin-bottom:16px;"><div style="display:flex;gap:12px;margin-bottom:12px;"><div style="width:40px;height:40px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;">'+h(post.writer[0])+'</div><div><div><strong>'+h(post.writer)+'</strong> '+lvJS(post.authorLv||1)+' <span style="color:var(--accent);">['+h(post.category)+']</span></div><div style="color:var(--text3);font-size:12px;">'+(post.created_at||'')+' · 조회 '+post.hit+'</div></div></div><div style="margin-bottom:12px;"><strong>'+h(post.title)+'</strong><br>'+h(post.content||'').replace(/\\n/g,'<br>').slice(0,200)+'</div><div style="display:flex;gap:10px;"><button class="btn-outline" style="padding:4px 12px;" onclick="likePost('+post.id+',\'like\')">👍 '+(post.like_count||0)+'</button><button class="btn-outline" style="padding:4px 12px;" onclick="openPost('+post.id+')">💬 '+cmts.length+'</button>'+(isAdmin?'<button class="btn-outline" style="padding:4px 12px;color:var(--danger);" onclick="delPost('+post.id+')">삭제</button>':'')+'</div></div>';
+  }).join('');
+}
+
+function renderBoard(pg){
+  pg = pg || 1; bPage = pg;
+  document.getElementById('board-title').textContent = curBoard;
+  var filtered = POSTS.filter(x => x.category === curBoard);
+  if(searchQ) filtered = filtered.filter(x => x.title.includes(searchQ) || (x.content||'').includes(searchQ));
+  var perPage = 20, total = filtered.length, pages = Math.max(1, Math.ceil(total/perPage));
+  document.getElementById('board-rows').innerHTML = makeRows(filtered.slice((pg-1)*perPage, pg*perPage));
+  var pg_el = document.getElementById('board-paging'); pg_el.innerHTML = '';
+  if(pg > 1){ var b1 = document.createElement('button'); b1.textContent = '‹'; b1.className = 'btn-outline'; b1.style.padding='4px 12px'; b1.onclick = ()=>renderBoard(pg-1); pg_el.appendChild(b1); }
+  for(var i = Math.max(1, pg-2); i <= Math.min(pages, pg+2); i++){
+    var btn = document.createElement('button'); btn.textContent = i; btn.className = 'btn-outline'; btn.style.padding='4px 12px';
+    if(i === pg){ btn.style.background = 'var(--accent)'; btn.style.color = '#fff'; btn.style.borderColor = 'var(--accent)'; }
+    btn.onclick = (ii => ()=>renderBoard(ii))(i);
+    pg_el.appendChild(btn);
+  }
+  if(pg < pages){ var b2 = document.createElement('button'); b2.textContent = '›'; b2.className = 'btn-outline'; b2.style.padding='4px 12px'; b2.onclick = ()=>renderBoard(pg+1); pg_el.appendChild(b2); }
+}
+
+function doSearch(){ searchQ = document.getElementById('search-input').value.trim(); renderBoard(1); }
+
+function openPost(id){
+  var post = POSTS.find(x => x.id == id); if(!post) return;
+  p('action=hit&post_id='+id); post.hit = (post.hit||0) + 1;
+  curPostId = id; prevPage = curPage;
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  document.getElementById('page-post').classList.add('active'); curPage = 'post';
+  var isAdmin = CU && (CU.isAdmin == 1 || CU.id === 'admin');
+  document.getElementById('post-detail-content').innerHTML = '<h2>'+(post.notice==1?'<span class="badge-notice">공지</span> ':'')+h(post.title)+'</h2><div style="margin:20px 0; color:var(--text3);">'+lvJS(post.authorLv||1)+' '+h(post.writer)+' · '+post.created_at+' · 조회 '+post.hit+' · 추천 '+(post.like_count||0)+'</div><div style="white-space:pre-wrap;">'+h(post.content||'')+'</div><div style="margin-top:20px;"><button class="btn-primary" onclick="likePost('+id+',\'like\')">👍 추천 '+(post.like_count||0)+'</button>'+(isAdmin?'<button class="btn-outline" style="margin-left:10px;color:var(--danger);" onclick="delPost('+id+')">삭제</button>':'')+'</div>';
+  var cmts = Array.isArray(post.comments) ? post.comments : [];
+  document.getElementById('cmt-cnt').textContent = cmts.length;
+  document.getElementById('cmt-list').innerHTML = cmts.map(c => '<div style="padding:12px 0; border-bottom:1px solid var(--bd);"><strong>'+h(c.nick)+'</strong> <span style="color:var(--text3);">'+c.date+'</span><div>'+h(c.body)+'</div></div>').join('');
+}
+function likePost(id, type){ if(!CU){ showModal('login'); return; } p('action=like&post_id='+id+'&user_id='+CU.id+'&type='+type).then(d=>{ if(d.success) location.reload(); }); }
+function delPost(id){ if(!confirm('삭제하시겠습니까?')) return; p('action=delete_post&id='+id).then(()=>{ showToast('삭제 완료'); location.reload(); }); }
+function submitComment(){ if(!CU){ showModal('login'); return; } var body = document.getElementById('cmt-input').value.trim(); if(!body) return; p('action=write_comment&post_id='+curPostId+'&nick='+encodeURIComponent(CU.nick)+'&body='+encodeURIComponent(body)).then(d=>{ if(d.success) location.reload(); }); }
+
+function tryWrite(){ if(!CU){ showModal('login'); return; } var isAdmin = CU && (CU.isAdmin==1 || CU.id==='admin'); document.getElementById('notice-chk-wrap').style.display = isAdmin?'block':'none'; goPage('write'); }
+function submitPost(){
+  if(!CU) return;
+  var title = document.getElementById('write-title').value.trim(), body = document.getElementById('write-body').value.trim(), cat = document.getElementById('write-cat').value, game = document.getElementById('write-game').value, isNotice = document.getElementById('write-notice')?.checked?1:0;
+  if(!title||!body){ showToast('제목과 내용을 입력하세요'); return; }
+  p('action=write_post&title='+encodeURIComponent(title)+'&content='+encodeURIComponent(body)+'&writer='+encodeURIComponent(CU.nick)+'&category='+encodeURIComponent(cat)+'&game='+encodeURIComponent(game)+'&is_notice='+isNotice).then(d=>{ if(d.success){ showToast('등록 완료!'); location.reload(); } });
+}
+
+function renderProfile(){
+  if(!CU){ goPage('home'); return; }
+  var mp = POSTS.filter(x => x.writer === CU.nick);
+  document.getElementById('profile-box').innerHTML = '<div style="text-align:center;"><div style="width:80px;height:80px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:32px;margin:0 auto 20px;">'+h(CU.nick[0])+'</div><h2>'+h(CU.nick)+'</h2><div>'+lvJS(CU.lv)+'</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:20px 0;"><div class="stat-card"><div class="stat-value">'+CU.lv+'</div><div class="stat-label">레벨</div></div><div class="stat-card"><div class="stat-value">'+CU.point+'</div><div class="stat-label">포인트</div></div><div class="stat-card"><div class="stat-value">'+mp.length+'</div><div class="stat-label">게시글</div></div></div></div>';
+  document.getElementById('my-post-rows').innerHTML = mp.sort((a,b)=>b.id-a.id).map(p => '<tr onclick="openPost('+p.id+')"><td>'+p.id+'</td><td>'+h(p.title)+'</td><td>'+(p.created_at||'').slice(5,10)+'</td><td>'+p.hit+'</td></tr>').join('');
+}
+
+var allUsers = [], currentUserPage = 1;
+function loadAdminUsers(page){
+  page = page || 1; currentUserPage = page;
+  if(allUsers.length === 0){
+    p('action=get_users').then(d => { if(!d.success){ showToast('권한 없음'); return; } allUsers = d.users || []; renderUserPage(page); });
+  } else { renderUserPage(page); }
+}
+function renderUserPage(page){
+  var perPage = 20, start = (page-1)*perPage, end = start+perPage, pageUsers = allUsers.slice(start, end);
+  var html = pageUsers.map(u => '<tr><td>'+h(u.id)+'</td><td>'+h(u.nick)+'</td><td>'+u.lv+'</td><td>'+u.point+'P</td><td><button class="btn-outline" style="padding:2px 8px;" onclick="setLv(\''+h(u.id)+'\',prompt(\'레벨:\','+u.lv+'))">레벨</button> '+(u.isAdmin!=1?'<button class="btn-outline" style="padding:2px 8px;color:var(--danger);" onclick="delUser(\''+h(u.id)+'\')">삭제</button>':'')+'</td></tr>').join('');
+  document.getElementById('admin-user-table').innerHTML = html || '<tr><td colspan="5">회원이 없습니다.</td></tr>';
+}
+function setLv(uid, lv){ if(!lv || isNaN(parseInt(lv))) return; p('action=set_level&target_id='+encodeURIComponent(uid)+'&lv='+parseInt(lv)).then(d=>{ if(d.success){ showToast('레벨 변경 완료'); allUsers = []; loadAdminUsers(currentUserPage); } }); }
+function delUser(uid){ if(!confirm(uid+'님을 탈퇴 처리할까요?')) return; p('action=delete_user&target_id='+encodeURIComponent(uid)).then(d=>{ if(d.success){ showToast('삭제 완료'); allUsers = []; loadAdminUsers(currentUserPage); } }); }
+
+function loadGallery(){
+  p('action=get_gallery').then(d => {
+    if(d.success && d.images){
+      var grid = document.getElementById('gallery-grid');
+      grid.innerHTML = d.images.map(img => '<div class="gallery-item"><img class="gallery-image" src="'+img.image+'" onclick="openGalleryModal(\''+img.image+'\')"><div class="gallery-info"><div class="gallery-title">'+h(img.title)+'</div><div class="gallery-meta"><span>'+h(img.writer)+'</span><span>'+img.created_at.slice(0,10)+'</span></div></div></div>').join('');
+    }
+  });
+}
+function previewAndUpload(input){
+  var file = input.files[0]; if(!file) return;
+  var reader = new FileReader();
+  reader.onload = e => {
+    var title = prompt('이미지 제목:');
+    if(!title) return;
+    p('action=upload_gallery&title='+encodeURIComponent(title)+'&writer='+encodeURIComponent(CU.nick)+'&image_data='+encodeURIComponent(e.target.result)).then(res => { if(res.success){ showToast('업로드 완료!'); loadGallery(); } });
+  };
+  reader.readAsDataURL(file);
+}
+
+function updateOnline(){
+  var b = CU ? 'action=update_online&user_id='+CU.id+'&nick='+encodeURIComponent(CU.nick) : 'action=get_online';
+  p(b).then(d => { if(d.success){ document.getElementById('online-count').textContent = d.count; document.getElementById('adm-online').textContent = d.count; } });
+}
+setInterval(updateOnline, 8000); updateOnline();
+
+function goPage(page, board){
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  document.querySelectorAll('.nav-links a').forEach(x => x.classList.remove('on'));
+  document.getElementById('nav-'+(board||page))?.classList.add('on');
+  prevPage = curPage; curPage = page;
+  if(board) curBoard = board;
+  if(page === 'home') renderHome();
+  if(page === 'activity') renderFeed();
+  if(page === 'board') renderBoard();
+  if(page === 'profile') renderProfile();
+  if(page === 'gallery') loadGallery();
+  window.scrollTo(0,0);
+}
+function goBack(){ goPage(prevPage||'home'); }
+
+renderHome();
+renderFeed();
+</script>
 </body>
 </html>
